@@ -40,6 +40,79 @@ function(spectranext_sdk_init)
     endif()
 endfunction()
 
+# Set boot BASIC program
+# Creates boot.bas file, compiles it to boot.zx, and creates upload_boot target
+# Usage: spectranext_set_boot("10 PRINT \"Hello\"") or spectranext_set_boot("PRINT \"Hello\"" 20)
+function(spectranext_set_boot BOOT_BASIC)
+    # Find zmakebas
+    if(DEFINED ENV{SPECTRANEXT_SDK_PATH})
+        set(ZMAKEBAS_EXECUTABLE "$ENV{SPECTRANEXT_SDK_PATH}/bin/zmakebas")
+    else()
+        # Try to find in PATH
+        find_program(ZMAKEBAS_EXECUTABLE zmakebas)
+    endif()
+    
+    if(NOT ZMAKEBAS_EXECUTABLE OR NOT EXISTS "${ZMAKEBAS_EXECUTABLE}")
+        message(WARNING "zmakebas not found, boot file will not be created")
+        return()
+    endif()
+    
+    # Find spx.py script and venv Python
+    if(DEFINED ENV{SPX_SDK_DIR})
+        set(SPX_SCRIPT "$ENV{SPX_SDK_DIR}/bin/spx.py")
+        if(EXISTS "$ENV{SPX_SDK_DIR}/venv/bin/python3")
+            set(PYTHON_EXECUTABLE "$ENV{SPX_SDK_DIR}/venv/bin/python3")
+        elseif(EXISTS "$ENV{SPX_SDK_DIR}/venv/bin/python")
+            set(PYTHON_EXECUTABLE "$ENV{SPX_SDK_DIR}/venv/bin/python")
+        else()
+            message(WARNING "SDK venv Python not found, boot upload target will not be created")
+            return()
+        endif()
+    elseif(DEFINED ENV{SPECTRANEXT_SDK_PATH})
+        set(SPX_SCRIPT "$ENV{SPECTRANEXT_SDK_PATH}/bin/spx.py")
+        if(EXISTS "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3")
+            set(PYTHON_EXECUTABLE "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3")
+        elseif(EXISTS "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python")
+            set(PYTHON_EXECUTABLE "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python")
+        else()
+            message(WARNING "SDK venv Python not found, boot upload target will not be created")
+            return()
+        endif()
+    else()
+        message(WARNING "SPX_SDK_DIR or SPECTRANEXT_SDK_PATH not set, boot upload target will not be created")
+        return()
+    endif()
+    
+    # Create boot.bas file in binary directory
+    set(BOOT_BAS_FILE "${CMAKE_BINARY_DIR}/boot.bas")
+    set(BOOT_ZX_FILE "${CMAKE_BINARY_DIR}/boot.zx")
+    
+    file(WRITE "${BOOT_BAS_FILE}" "${BOOT_BASIC}\n")
+    
+    # Compile boot.bas to boot.zx using zmakebas
+    add_custom_command(
+        OUTPUT "${BOOT_ZX_FILE}"
+        COMMAND ${ZMAKEBAS_EXECUTABLE} -o "${BOOT_ZX_FILE}" -a 10 "${BOOT_BAS_FILE}"
+        DEPENDS "${BOOT_BAS_FILE}"
+        COMMENT "Compiling boot.bas to boot.zx (starting at line 10)"
+    )
+    
+    # Create a target for the boot file
+    add_custom_target(boot_file DEPENDS "${BOOT_ZX_FILE}")
+    
+    # Create upload_boot target
+    set(REMOTE_BOOT_PATH "boot.zx")
+    add_custom_target(upload_boot
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target boot_file
+        COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} put ${BOOT_ZX_FILE} ${REMOTE_BOOT_PATH}
+        DEPENDS boot_file
+        COMMENT "Building and uploading boot.zx"
+    )
+    
+    message(STATUS "Boot BASIC program set (line 10): ${BOOT_BASIC}")
+    message(STATUS "  Created target: upload_boot")
+endfunction()
+
 # Add extra output targets for a project
 # Creates targets: <project_name>_upload, <project_name>_program, <project_name>_autoboot
 # Also creates convenience targets: program, upload, autoboot
@@ -103,40 +176,51 @@ function(spectranext_add_extra_outputs PROJECT_NAME)
     # Remote paths
     set(REMOTE_BIN_PATH "${PROJECT_NAME}.bin")
     set(REMOTE_TAP_PATH "${PROJECT_NAME}.tap")
-    
-    add_custom_target(${PROJECT_NAME}_upload_bin
-        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${PROJECT_NAME}
-        COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} put ${BIN_PATH} ${REMOTE_BIN_PATH}
-        COMMENT "Building and uploading ${PROJECT_NAME}.bin to ${REMOTE_BIN_PATH}"
-    )
-    
-    # Create upload_tap target (build + upload)
-    add_custom_target(${PROJECT_NAME}_upload_tap
-        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${PROJECT_NAME}
-        COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} put ${TAP_PATH} ${REMOTE_TAP_PATH}
-        COMMENT "Building and uploading ${PROJECT_NAME}.tap to ${REMOTE_TAP_PATH}"
-    )
-    
-    # Create autoboot target (build + upload_bin + autoboot)
+
+    if(TARGET upload_boot)
+        add_custom_target(${PROJECT_NAME}_upload_bin
+            COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} put ${BIN_PATH} ${REMOTE_BIN_PATH}
+            COMMENT "Building and uploading ${PROJECT_NAME}.bin to ${REMOTE_BIN_PATH}"
+            DEPENDS ${PROJECT_NAME} upload_boot
+        )
+
+        add_custom_target(${PROJECT_NAME}_upload_tap
+            COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} put ${TAP_PATH} ${REMOTE_TAP_PATH}
+            COMMENT "Building and uploading ${PROJECT_NAME}.tap to ${REMOTE_TAP_PATH}"
+            DEPENDS ${PROJECT_NAME} upload_boot
+        )
+    else()
+        add_custom_target(${PROJECT_NAME}_upload_bin
+            COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} put ${BIN_PATH} ${REMOTE_BIN_PATH}
+            COMMENT "Building and uploading ${PROJECT_NAME}.bin to ${REMOTE_BIN_PATH}"
+            DEPENDS ${PROJECT_NAME}
+        )
+        add_custom_target(${PROJECT_NAME}_upload_tap
+            COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} put ${TAP_PATH} ${REMOTE_TAP_PATH}
+            COMMENT "Building and uploading ${PROJECT_NAME}.tap to ${REMOTE_TAP_PATH}"
+            DEPENDS ${PROJECT_NAME}
+        )
+    endif()
+
     add_custom_target(${PROJECT_NAME}_bin_autoboot
-        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${PROJECT_NAME}
-        COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} put ${BIN_PATH} ${REMOTE_BIN_PATH}
         COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} autoboot
-        COMMENT "Building, uploading ${PROJECT_NAME}.bin, and configuring autoboot"
+        COMMENT "Rebooting into .bin (boot.zx)"
+        DEPENDS ${PROJECT_NAME}_upload_bin
     )
-    
-    # Create autoboot target (build + upload_bin + autoboot)
+
     add_custom_target(${PROJECT_NAME}_tap_autoboot
-        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${REMOTE_TAP_PATH}
-        COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} put ${TAP_PATH} ${REMOTE_TAP_PATH}
         COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} autoboot
-        COMMENT "Building, uploading ${PROJECT_NAME}.tap, and configuring autoboot"
+        COMMENT "Rebooting into .tap (boot.zx)"
+        DEPENDS ${PROJECT_NAME}_upload_tap
     )
-    
+
     message(STATUS "Created targets for ${PROJECT_NAME}:")
     message(STATUS "  ${PROJECT_NAME}_upload_bin - Build and upload .bin file")
     message(STATUS "  ${PROJECT_NAME}_upload_tap - Build and upload .tap file")
     message(STATUS "  ${PROJECT_NAME}_bin_autoboot - Build, upload .bin, and autoboot")
-    message(STATUS "  ${PROJECT_NAME}_tap_autoboot - Build, upload .bin, and autoboot")
+    message(STATUS "  ${PROJECT_NAME}_tap_autoboot - Build, upload .tap, and autoboot")
+    if(TARGET upload_boot)
+        message(STATUS "  Note: upload_bin and upload_tap depend on upload_boot")
+    endif()
 endfunction()
 

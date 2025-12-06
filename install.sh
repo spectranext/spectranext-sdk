@@ -151,6 +151,48 @@ else
     echo "Warning: requirements.txt not found, skipping dependency installation"
 fi
 
+# Install zmakebas
+if [ -d "zmakebas" ] && [ -f "bin/zmakebas" ]; then
+    echo "zmakebas already installed, skipping..."
+else
+    echo "Installing zmakebas..."
+    
+    # Check if git is available
+    if ! command -v git &> /dev/null; then
+        echo "Error: git is required to clone zmakebas. Please install git first."
+        exit 1
+    fi
+    
+    # Check if make is available
+    if ! command -v make &> /dev/null; then
+        echo "Error: make is required to build zmakebas. Please install make first."
+        exit 1
+    fi
+    
+    # Check if a C compiler is available
+    if ! command -v gcc &> /dev/null && ! command -v clang &> /dev/null && ! command -v cc &> /dev/null; then
+        echo "Error: A C compiler (gcc, clang, or cc) is required to build zmakebas. Please install a C compiler first."
+        exit 1
+    fi
+    
+    # Clone zmakebas repository
+    if [ ! -d "zmakebas" ]; then
+        echo "Cloning zmakebas repository..."
+        git clone https://github.com/spectranext/zmakebas.git zmakebas
+    fi
+    
+    # Build and install zmakebas
+    cd zmakebas
+    echo "Building zmakebas..."
+    make
+    
+    echo "Installing zmakebas..."
+    make PREFIX="$SCRIPT_DIR" install
+    
+    cd ..
+    echo "zmakebas installation complete!"
+fi
+
 echo ""
 echo "Installation complete!"
 echo ""

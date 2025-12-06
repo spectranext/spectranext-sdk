@@ -52,6 +52,13 @@ target_link_libraries(idetest PUBLIC -lndos -llibspectranet.lib -llibsocket.lib)
 
 target_link_options(idetest PUBLIC -debug -create-app)
 
+# Set boot basic program (optional)
+# This creates a boot.zx file that will be uploaded before your program
+spectranext_set_boot("
+10 %tapein \"idetest.tap\"
+20 LOAD \"\"
+")
+
 # Add convenience targets (upload_bin, upload_tap, etc.)
 spectranext_add_extra_outputs(idetest)
 ```
@@ -62,7 +69,43 @@ If `source.sh` is not sourced then `SPECTRANEXT_SDK_PATH` must be explicitly pro
 
 - **`spectranext_sdk_init()` must be called before `project()`** - This is required because the SDK sets up the CMake toolchain, which must be configured before the project is defined.
 
+### Boot BASIC Program
+
+The `spectranext_set_boot()` function allows you to create a boot BASIC program that will be automatically uploaded before your main program. This is useful for creating loader programs or initialization code.
+
+**Usage:**
+```cmake
+spectranext_set_boot("
+10 PRINT \"Booting...\"
+20 CLEAR 32767
+30 %aload \"myprogram.bin\" CODE 32768
+40 RANDOMIZE USR 32768
+")
+```
+
+The function:
+- Creates `boot.bas` in the CMake binary directory
+- Compiles it to `boot.zx` using `zmakebas` (starting at line 10)
+- Creates an `upload_boot` target that builds and uploads `boot.zx`
+- When `spectranext_add_extra_outputs()` is called, `upload_bin` and `upload_tap` targets will automatically depend on `upload_boot` if it exists
+
+**Example boot program:**
+```cmake
+spectranext_set_boot("
+10 REM Boot loader
+20 %tapein \"myprogram.tap\"
+30 LOAD \"\"
+40 REM Program will auto-run after loading
+")
+```
+
+The boot program is compiled with `zmakebas -o boot.zx -a 10 boot.bas`, which means it starts at line 10. Make sure your BASIC code includes line numbers or uses labels if you're using zmakebas label mode.
+
 ### Available Targets
+
+If `spectranext_set_boot()` was called, the following additional target is available:
+
+- `upload_boot` - Build and upload `boot.zx` file for your BASIC loader program.
 
 After calling `spectranext_add_extra_outputs(project_name)`, the following targets are available:
 
@@ -113,7 +156,7 @@ The SDK provides command-line tools for interacting with Spectranext:
 
 ### Spectranext filesystem tools
 
-You can read on xfs tools a little bit more here: https://docs.spectranext.net/development/xfs
+You can read on xfs tools a little bit more here: https://docs.spectranext.net/development/syncing-with-computer
 
 - `spx-ls [path]` - List contents of RAMFS on Spectranext cartridge
 - `spx-get <remote> <local>` - Download file from device

@@ -20,8 +20,8 @@ if [ -z "$SCRIPT_DIR" ] || [ ! -f "$SCRIPT_DIR/source.sh" ]; then
     return 1 2>/dev/null || exit 1
 fi
 
-# Add z88dk/bin to PATH
-export PATH="$SCRIPT_DIR/z88dk/bin:$PATH"
+# Add to PATH
+export PATH="$SCRIPT_DIR/bin:$SCRIPT_DIR/z88dk/bin:$PATH"
 
 # Set ZCCCFG environment variable
 # Try to detect the actual location, fallback to standard path

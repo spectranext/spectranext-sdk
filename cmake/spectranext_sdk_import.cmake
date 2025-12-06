@@ -1,0 +1,142 @@
+# spectranext_sdk_import.cmake
+# CMake module for Spectranext SDK - sets up z88dk toolchain and provides convenience targets
+
+# Initialize Spectranext SDK
+# Sets up toolchain, includes directories, and configures z88dk
+function(spectranext_sdk_init)
+    # Set up toolchain if SPECTRANEXT_TOOLCHAIN is defined
+    if(DEFINED ENV{SPECTRANEXT_TOOLCHAIN} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+        set(CMAKE_TOOLCHAIN_FILE "$ENV{SPECTRANEXT_TOOLCHAIN}" CACHE FILEPATH "CMake toolchain file" FORCE)
+    endif()
+    
+    # Set ZCCTARGET if not already set
+    if(NOT DEFINED ZCCTARGET)
+        if(DEFINED ENV{ZCCTARGET})
+            set(ZCCTARGET "$ENV{ZCCTARGET}" CACHE STRING "z88dk target configuration" FORCE)
+        else()
+            set(ZCCTARGET "zx" CACHE STRING "z88dk target configuration" FORCE)
+        endif()
+    endif()
+    
+    # Add Spectranext include directory if available
+    if(DEFINED ENV{SPECTRANEXT_INCLUDE_DIR})
+        include_directories("$ENV{SPECTRANEXT_INCLUDE_DIR}")
+    endif()
+
+    link_directories("$ENV{SPECTRANEXT_SDK_PATH}/clibs")
+    
+    # Add z88dk include directory
+    if(DEFINED ENV{SPECTRANEXT_SDK_PATH})
+        set(Z88DK_INCLUDE_DIR "$ENV{SPECTRANEXT_SDK_PATH}/z88dk/include")
+        if(EXISTS "${Z88DK_INCLUDE_DIR}")
+            include_directories("${Z88DK_INCLUDE_DIR}")
+        endif()
+    endif()
+    
+    message(STATUS "Spectranext SDK initialized")
+    message(STATUS "  ZCCTARGET: ${ZCCTARGET}")
+    if(DEFINED CMAKE_TOOLCHAIN_FILE)
+        message(STATUS "  Toolchain: ${CMAKE_TOOLCHAIN_FILE}")
+    endif()
+endfunction()
+
+# Add extra output targets for a project
+# Creates targets: <project_name>_upload, <project_name>_program, <project_name>_autoboot
+# Also creates convenience targets: program, upload, autoboot
+# Usage: spectranext_add_extra_outputs(my_project)
+function(spectranext_add_extra_outputs PROJECT_NAME)
+    # Find spx.py script and venv Python
+    if(DEFINED ENV{SPX_SDK_DIR})
+        set(SPX_SCRIPT "$ENV{SPX_SDK_DIR}/bin/spx.py")
+        # Use venv Python from SDK
+        if(EXISTS "$ENV{SPX_SDK_DIR}/venv/bin/python3")
+            set(PYTHON_EXECUTABLE "$ENV{SPX_SDK_DIR}/venv/bin/python3")
+        elseif(EXISTS "$ENV{SPX_SDK_DIR}/venv/bin/python")
+            set(PYTHON_EXECUTABLE "$ENV{SPX_SDK_DIR}/venv/bin/python")
+        else()
+            message(WARNING "SDK venv Python not found at $ENV{SPX_SDK_DIR}/venv/bin/python3, cannot create upload targets")
+            return()
+        endif()
+    elseif(DEFINED ENV{SPECTRANEXT_SDK_PATH})
+        set(SPX_SCRIPT "$ENV{SPECTRANEXT_SDK_PATH}/bin/spx.py")
+        # Use venv Python from SDK
+        if(EXISTS "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3")
+            set(PYTHON_EXECUTABLE "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3")
+        elseif(EXISTS "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python")
+            set(PYTHON_EXECUTABLE "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python")
+        else()
+            message(WARNING "SDK venv Python not found at $ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3, cannot create upload targets")
+            return()
+        endif()
+    else()
+        message(WARNING "SPX_SDK_DIR or SPECTRANEXT_SDK_PATH not set, cannot create upload targets")
+        return()
+    endif()
+    
+    # Determine binary paths from target properties (.bin and .tap)
+    if(TARGET ${PROJECT_NAME})
+        get_target_property(OUTPUT_NAME ${PROJECT_NAME} OUTPUT_NAME)
+        if(NOT OUTPUT_NAME)
+            set(OUTPUT_NAME ${PROJECT_NAME})
+        endif()
+        
+        get_target_property(RUNTIME_OUTPUT_DIRECTORY ${PROJECT_NAME} RUNTIME_OUTPUT_DIRECTORY)
+        if(RUNTIME_OUTPUT_DIRECTORY)
+            set(BIN_PATH "${RUNTIME_OUTPUT_DIRECTORY}/${OUTPUT_NAME}.bin")
+            set(TAP_PATH "${RUNTIME_OUTPUT_DIRECTORY}/${OUTPUT_NAME}.tap")
+        else()
+            # Use default output directory
+            if(CMAKE_RUNTIME_OUTPUT_DIRECTORY)
+                set(BIN_PATH "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${OUTPUT_NAME}.bin")
+                set(TAP_PATH "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${OUTPUT_NAME}.tap")
+            else()
+                set(BIN_PATH "${CMAKE_CURRENT_BINARY_DIR}/${OUTPUT_NAME}.bin")
+                set(TAP_PATH "${CMAKE_CURRENT_BINARY_DIR}/${OUTPUT_NAME}.tap")
+            endif()
+        endif()
+    else()
+        # Target doesn't exist yet, use default paths
+        set(BIN_PATH "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.bin")
+        set(TAP_PATH "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.tap")
+    endif()
+    
+    # Remote paths
+    set(REMOTE_BIN_PATH "${PROJECT_NAME}.bin")
+    set(REMOTE_TAP_PATH "${PROJECT_NAME}.tap")
+    
+    add_custom_target(${PROJECT_NAME}_upload_bin
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${PROJECT_NAME}
+        COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} put ${BIN_PATH} ${REMOTE_BIN_PATH}
+        COMMENT "Building and uploading ${PROJECT_NAME}.bin to ${REMOTE_BIN_PATH}"
+    )
+    
+    # Create upload_tap target (build + upload)
+    add_custom_target(${PROJECT_NAME}_upload_tap
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${PROJECT_NAME}
+        COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} put ${TAP_PATH} ${REMOTE_TAP_PATH}
+        COMMENT "Building and uploading ${PROJECT_NAME}.tap to ${REMOTE_TAP_PATH}"
+    )
+    
+    # Create autoboot target (build + upload_bin + autoboot)
+    add_custom_target(${PROJECT_NAME}_bin_autoboot
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${PROJECT_NAME}
+        COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} put ${BIN_PATH} ${REMOTE_BIN_PATH}
+        COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} autoboot
+        COMMENT "Building, uploading ${PROJECT_NAME}.bin, and configuring autoboot"
+    )
+    
+    # Create autoboot target (build + upload_bin + autoboot)
+    add_custom_target(${PROJECT_NAME}_tap_autoboot
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${REMOTE_TAP_PATH}
+        COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} put ${TAP_PATH} ${REMOTE_TAP_PATH}
+        COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} autoboot
+        COMMENT "Building, uploading ${PROJECT_NAME}.tap, and configuring autoboot"
+    )
+    
+    message(STATUS "Created targets for ${PROJECT_NAME}:")
+    message(STATUS "  ${PROJECT_NAME}_upload_bin - Build and upload .bin file")
+    message(STATUS "  ${PROJECT_NAME}_upload_tap - Build and upload .tap file")
+    message(STATUS "  ${PROJECT_NAME}_bin_autoboot - Build, upload .bin, and autoboot")
+    message(STATUS "  ${PROJECT_NAME}_tap_autoboot - Build, upload .bin, and autoboot")
+endfunction()
+

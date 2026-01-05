@@ -289,6 +289,24 @@ spx-terminal() {
     minicom -D "$console_port" -b 115200
 }
 
+# Start web browser interface for RAMFS
+spx-browser() {
+    local python_cmd=$(_spx_get_python)
+    [ $? -ne 0 ] && return 1
+    
+    local browser_script="$SPX_SDK_DIR/bin/spx-browser.py"
+    if [[ ! -f "$browser_script" ]]; then
+        browser_script="$_SPX_SCRIPT_DIR/spx-browser.py"
+    fi
+    
+    if [[ ! -f "$browser_script" ]]; then
+        echo "Error: spx-browser.py not found" >&2
+        return 1
+    fi
+    
+    "$python_cmd" "$browser_script"
+}
+
 # Print usage
 spx-help() {
     cat <<EOF
@@ -304,6 +322,7 @@ SPX Commands:
   spx-reboot             Trigger ZX Spectrum reboot
   spx-autoboot           Configure autoboot from xfs://ram/ and reboot ZX Spectrum
   spx-terminal           Launch minicom terminal on console port
+  spx-browser            Start web browser interface for RAMFS
 EOF
 }
 

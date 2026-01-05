@@ -10,13 +10,15 @@ import serial.tools.list_ports
 import argparse
 import os
 import time
+import socket
+import tempfile
 from typing import Optional, Tuple
 
 # USB vendor/product IDs for spectranext
 VENDOR_ID = 0x1337
 PRODUCT_ID = 0x0001
 
-# CDC interface numbers (0 = console, 1 = USBFS)
+# CDC interface numbers (0 = console, 1 = USBFS, 2 = GDB)
 USBFS_INTERFACE = 1
 
 
@@ -113,10 +115,23 @@ class SPXConnection:
         self.ser.timeout = 1
         
         # Send STATUS command to verify connection is clean and ready
-        response = self._send_command("STATUS")
-        status, _ = self._parse_response(response)
-        if status != "OK":
-            raise USBFSIOError(f"Connection not ready: {response}")
+        # Retry a few times in case device is busy
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self._send_command("STATUS")
+                status, _ = self._parse_response(response)
+                if status == "OK":
+                    break
+                if attempt < max_retries - 1:
+                    time.sleep(0.1)  # Brief delay before retry
+                    continue
+                raise USBFSIOError(f"Connection not ready: {response}")
+            except (serial.SerialTimeoutException, serial.SerialException) as e:
+                if attempt < max_retries - 1:
+                    time.sleep(0.1)  # Brief delay before retry
+                    continue
+                raise USBFSIOError(f"Connection error: {e}")
         
         self.show_progress = show_progress and sys.stdout.isatty()
     
@@ -526,6 +541,33 @@ def cmd_autoboot(args, show_progress: bool = True):
         conn.close()
 
 
+def find_free_port(start_port: int = 8000) -> int:
+    """Find a free port starting from start_port"""
+    port = start_port
+    while port < start_port + 100:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind(('127.0.0.1', port))
+            sock.close()
+            return port
+        except OSError:
+            port += 1
+    raise RuntimeError(f"Could not find free port starting from {start_port}")
+
+
+def cmd_browser(args, show_progress: bool = True):
+    """Start web browser interface for RAMFS"""
+    # Import spx-browser module and run it
+    # Use importlib to handle the hyphenated module name
+    import importlib.util
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    browser_path = os.path.join(script_dir, 'spx-browser.py')
+    spec = importlib.util.spec_from_file_location("spx_browser", browser_path)
+    browser_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(browser_module)
+    browser_module.main()
+
+
 def main():
     parser = argparse.ArgumentParser(description='SPX - Spectranext tool')
     parser.add_argument('--port', '-p', help='Serial port (auto-detect if not specified)')
@@ -570,6 +612,11 @@ def main():
     # AUTOBOOT command
     parser_autoboot = subparsers.add_parser('autoboot', help='Configure autoboot from xfs://ram/ and reboot ZX Spectrum')
     
+    # BROWSER command
+    parser_browser = subparsers.add_parser('browser', help='Start web browser interface for RAMFS')
+    parser_browser.add_argument('--port', type=int, help='Port to listen on (default: auto-detect)')
+    parser_browser.add_argument('--host', type=str, default='127.0.0.1', help='Host to bind to (default: 127.0.0.1)')
+    
     args = parser.parse_args()
     
     if not args.command:
@@ -598,6 +645,8 @@ def main():
             cmd_reboot(args, show_progress)
         elif args.command == 'autoboot':
             cmd_autoboot(args, show_progress)
+        elif args.command == 'browser':
+            cmd_browser(args, show_progress)
     except USBFSNotFoundError as e:
         print(f"Error: Not found - {e}", file=sys.stderr)
         sys.exit(1)

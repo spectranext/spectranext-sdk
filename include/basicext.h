@@ -25,10 +25,6 @@
 ;THE SOFTWARE.
 */
 
-#ifdef INCLUDE_ENV_H
-#include "env.h"
-#endif
-
 /*--------------------------------------------------*/
 /* Retrieve values from BASIC using ZX ROM routines */
 

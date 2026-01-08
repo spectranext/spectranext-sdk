@@ -31,10 +31,6 @@
 
 */
 
-#ifdef INCLUDE_ENV_H
-#include "env.h"
-#endif
-
 /* TODO: Move to sys/types.h */
 #ifndef in_addr_t
 #define in_addr_t	unsigned long
@@ -73,37 +69,6 @@ extern void __LIB__ __FASTCALL__	ifconfig_netmask(in_addr_t *addr);
 extern void __LIB__ __FASTCALL__	get_ifconfig_netmask(in_addr_t *addr);
 extern void __LIB__ __FASTCALL__	ifconfig_gw(in_addr_t *addr);
 extern void __LIB__ __FASTCALL__	get_ifconfig_gw(in_addr_t *addr);
-
-/* RAW CONFIGURATION FUNCTIONS, since these are part of CONFIG module, these assume the spectranet is paged in */
-
-/* copy config to RAM to be able to write to it */
-extern void __LIB__ __FASTCALL__	config_copyconfig();
-/* sets the configuration section we're going to use, returns 1 on failure */
-extern char __LIB__ __FASTCALL__	config_findsection(unsigned int section);
-/* creates a section with the ID specified */
-extern void __LIB__ __FASTCALL__	config_createsection(unsigned int section);
-
-/* for items, pay attention to keep the two MSB (0x80 and 0x40) of the items according to this
- * 00			Null terminated string
- * 01			reserved
- * 10			8 bit value
- * 11			16 bit value
- */
-
-/* gets a string item, returns 0 on success */
-extern char __LIB__ __CALLEE__	    config_getCFString(unsigned char item, char* output);
-/* gets a byte item, returns 0 on success */
-extern char __LIB__ __CALLEE__	    config_getCFByte(unsigned char item, unsigned char* output);
-/* gets a 16 bit item, returns 0 on success */
-extern char __LIB__ __CALLEE__	    config_getCFWord(unsigned char item, unsigned int* output);
-/* sets a byte item */
-extern void __LIB__	__CALLEE__      config_setCFByte(unsigned char item, unsigned char data);
-/* sets a 16 bit item */
-extern void __LIB__	__CALLEE__      config_setCFWord(unsigned char item, unsigned int data);
-/* sets a string item */
-extern void __LIB__	__CALLEE__      config_setCFString(unsigned char item, unsigned char* data);
-/* commits the changes of the configuration to flash memory. */
-extern void __LIB__	                config_commitConfig();
 
 /* De-configure inet settings (reset to 0.0.0.0 for addr, gw, netmask) */
 extern void __LIB__			deconfig();

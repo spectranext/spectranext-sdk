@@ -1,6 +1,5 @@
 #ifndef __SOCKPOLL_H__
 #define __SOCKPOLL_H__
-
 /*
  * sockpoll.h
  *
@@ -24,10 +23,6 @@
  * same as the POSIX structure). The pollfd function simply returns
  * an event bitfield.
  */
-
-#ifdef INCLUDE_ENV_H
-#include "env.h"
-#endif
 
 /* Bitfield mask values for event/revent members */
 #define POLLCON		1	/* remote host connected (not POSIX) */

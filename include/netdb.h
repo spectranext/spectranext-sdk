@@ -9,10 +9,6 @@
  * 2008-05-08 Dylan Smith
  */
 
-#ifdef INCLUDE_ENV_H
-#include "env.h"
-#endif
-
 /* netdb structures: note they are a little bit(!) divergent from the
  * typical BSD library.
  * Note, like BSD, the struct hostent is just statically allocated

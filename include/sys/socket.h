@@ -9,10 +9,6 @@
  * 2008-05-03 Dylan Smith
  */
 
-#ifdef INCLUDE_ENV_H
-#include "env.h"
-#endif
-
 /* Definitions */
 #define AF_INET		0
 #define SOCK_STREAM	1

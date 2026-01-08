@@ -47,36 +47,6 @@ def main():
         print(f"Error: Browser directory not found: {browser_dir}", file=sys.stderr)
         sys.exit(1)
     
-    # Global server reference for graceful shutdown
-    server_instance = None
-    
-    # Create connection at startup - fail if device is not available
-    print("Connecting to Spectranext device...")
-    try:
-        # Force auto-detection of USBFS port by passing None
-        # This ensures we use the correct interface (interface 1 = USBFS)
-        connection = SPXConnection(port=None, show_progress=False)
-        print("Connected successfully!")
-    except USBFSException as e:
-        print(f"Error: Could not connect to Spectranext device: {e}", file=sys.stderr)
-        sys.exit(1)
-    except Exception as e:
-        print(f"Error: Unexpected error connecting to device: {e}", file=sys.stderr)
-        sys.exit(1)
-    
-    shutdown_event = threading.Event()
-    
-    def handle_device_disconnect():
-        """Handle USB device disconnection - shutdown server gracefully"""
-        print("\nDevice disconnected. Shutting down browser...", file=sys.stderr)
-        # Signal shutdown
-        shutdown_event.set()
-        # Use a background thread to exit, avoiding FastAPI exception handling
-        def exit_process():
-            time.sleep(0.1)  # Brief delay to allow response to be sent
-            os._exit(0)
-        threading.Thread(target=exit_process, daemon=False).start()
-    
     # Create FastAPI app
     app = FastAPI(title="SPX Browser", description="Web interface for Spectranext RAMFS")
     
@@ -84,8 +54,10 @@ def main():
     app.mount("/static", StaticFiles(directory=browser_dir), name="static")
     
     def get_connection():
-        """Get SPX connection for API calls - returns the shared connection"""
-        return connection
+        """Create a new SPX connection instance"""
+        # Force auto-detection of USBFS port by passing None
+        # This ensures we use the correct interface (interface 1 = USBFS)
+        return SPXConnection(port=None, show_progress=False)
     
     @app.get("/")
     async def root():
@@ -125,14 +97,17 @@ def main():
             error_msg = str(e) if str(e) else f"File not found: {ramfs_path}"
             raise HTTPException(status_code=404, detail=error_msg)
         except (serial.serialutil.SerialException, OSError) as e:
-            # USB device disconnected
+            # USB device disconnected or error
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
-            handle_device_disconnect()
+            raise HTTPException(status_code=503, detail=f"Device connection error: {str(e)}")
         except USBFSException as e:
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
             raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            # Close connection after use
+            conn.close()
       
     
     @app.get("/ramfs/{path:path}")
@@ -161,11 +136,13 @@ def main():
         except USBFSNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
         except (serial.serialutil.SerialException, OSError) as e:
-            # USB device disconnected
-            handle_device_disconnect()
+            # USB device disconnected or error
+            raise HTTPException(status_code=503, detail=f"Device connection error: {str(e)}")
         except USBFSException as e:
             raise HTTPException(status_code=500, detail=str(e))
-        # Don't close connection - it's shared
+        finally:
+            # Close connection after use
+            conn.close()
     
     @app.post("/ramfs/{path:path}")
     async def upload_file(path: str, file: UploadFile = File(...)):
@@ -197,7 +174,8 @@ def main():
                 conn.put(tmp_path, ramfs_path)
                 return JSONResponse(content={"message": "File uploaded successfully"})
             finally:
-                # Don't close connection - it's shared
+                # Close connection after use
+                conn.close()
                 if tmp_path and os.path.exists(tmp_path):
                     os.unlink(tmp_path)
         except HTTPException:
@@ -210,10 +188,10 @@ def main():
                 os.unlink(tmp_path)
             raise HTTPException(status_code=409, detail=str(e))
         except (serial.serialutil.SerialException, OSError) as e:
-            # USB device disconnected
+            # USB device disconnected or error
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
-            handle_device_disconnect()
+            raise HTTPException(status_code=503, detail=f"Device connection error: {str(e)}")
         except USBFSException as e:
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
@@ -231,21 +209,25 @@ def main():
             ramfs_path = "/" + path.lstrip("/")
             
             conn = get_connection()
-            # Try to delete as file first, then as directory if not found
             try:
-                conn.rm(ramfs_path)
-                return JSONResponse(content={"message": "File deleted successfully"})
-            except USBFSNotFoundError:
-                # Not a file, try as directory
-                conn.rmdir(ramfs_path)
-                return JSONResponse(content={"message": "Directory deleted successfully"})
+                # Try to delete as file first, then as directory if not found
+                try:
+                    conn.rm(ramfs_path)
+                    return JSONResponse(content={"message": "File deleted successfully"})
+                except USBFSNotFoundError:
+                    # Not a file, try as directory
+                    conn.rmdir(ramfs_path)
+                    return JSONResponse(content={"message": "Directory deleted successfully"})
+            finally:
+                # Close connection after use
+                conn.close()
         except USBFSNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
         except USBFSPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e))
         except (serial.serialutil.SerialException, OSError) as e:
-            # USB device disconnected
-            handle_device_disconnect()
+            # USB device disconnected or error
+            raise HTTPException(status_code=503, detail=f"Device connection error: {str(e)}")
         except USBFSException as e:
             raise HTTPException(status_code=500, detail=str(e))
     
@@ -256,14 +238,17 @@ def main():
             ramfs_path = "/" + path.lstrip("/")
             
             conn = get_connection()
-            conn.mkdir(ramfs_path)
-            return JSONResponse(content={"message": "Directory created successfully"})
-            # Don't close connection - it's shared
+            try:
+                conn.mkdir(ramfs_path)
+                return JSONResponse(content={"message": "Directory created successfully"})
+            finally:
+                # Close connection after use
+                conn.close()
         except USBFSExistsError as e:
             raise HTTPException(status_code=409, detail=str(e))
         except (serial.serialutil.SerialException, OSError) as e:
-            # USB device disconnected
-            handle_device_disconnect()
+            # USB device disconnected or error
+            raise HTTPException(status_code=503, detail=f"Device connection error: {str(e)}")
         except USBFSException as e:
             raise HTTPException(status_code=500, detail=str(e))
     
@@ -285,32 +270,7 @@ def main():
     browser_thread = threading.Thread(target=open_browser, daemon=True)
     browser_thread.start()
     
-    # Store server instance for graceful shutdown
-    config = uvicorn.Config(app, host=args.host, port=port)
-    server = uvicorn.Server(config)
-    
-    # Monitor shutdown event in background thread
-    def monitor_shutdown():
-        shutdown_event.wait()
-        if shutdown_event.is_set():
-            print("\nShutting down server...", file=sys.stderr)
-            server.should_exit = True
-    
-    monitor_thread = threading.Thread(target=monitor_shutdown, daemon=True)
-    monitor_thread.start()
-    
-    try:
-        server.run()
-    except KeyboardInterrupt:
-        print("\nShutting down...")
-    except Exception as e:
-        # Check if it's a serial/device error
-        error_str = str(e)
-        if "Device not configured" in error_str or "SerialException" in str(type(e).__name__) or isinstance(e, (serial.serialutil.SerialException, OSError)):
-            print("\nDevice disconnected. Shutting down...", file=sys.stderr)
-            os._exit(0)
-        else:
-            raise
+    uvicorn.run(app, host=args.host, port=port)
 
 
 if __name__ == "__main__":

@@ -120,8 +120,10 @@ class SPXConnection:
         for attempt in range(max_retries):
             try:
                 response = self._send_command("STATUS")
-                status, _ = self._parse_response(response)
+                status, version, _ = self._parse_response(response)
                 if status == "OK":
+                    if version != 2:
+                        raise USBFSException(f"Unsupported protocol version: {version}. Expected version 2.")
                     break
                 if attempt < max_retries - 1:
                     time.sleep(0.1)  # Brief delay before retry
@@ -141,26 +143,30 @@ class SPXConnection:
     
     def _send_command(self, cmd: str) -> str:
         """Send command and read response line"""
-        cmd_line = cmd + '\n'
+        cmd_line = cmd + '\r\n'
         self.ser.write(cmd_line.encode('ascii'))
         self.ser.flush()
         
         response = self.ser.readline().decode('ascii', errors='ignore').strip()
         return response
     
-    def _parse_response(self, response: str) -> Tuple[str, Optional[int]]:
-        """Parse response line into status and optional value"""
-        parts = response.split(' ', 1)
+    def _parse_response(self, response: str) -> Tuple[str, Optional[int], Optional[int]]:
+        """Parse response line into status and optional values"""
+        parts = response.split(' ')
         status = parts[0]
-        if len(parts) > 1:
+        values = []
+        
+        # Parse all numeric values after the status
+        for i in range(1, len(parts)):
             try:
-                value = int(parts[1])
+                value = int(parts[i])
+                values.append(value)
             except ValueError:
-                # If it's not a pure integer, return None (e.g., "ERR 4 Unknown command")
-                value = None
-        else:
-            value = None
-        return status, value
+                # Stop at first non-numeric value
+                break
+        
+        # Return status and all parsed values (for backward compatibility, pad with None)
+        return status, values[0] if len(values) > 0 else None, values[1] if len(values) > 1 else None
     
     def _read_error(self, response: str) -> Tuple[int, str]:
         """Parse error response"""
@@ -185,30 +191,37 @@ class SPXConnection:
         cmd = f"LS {path}"
         response = self._send_command(cmd)
         
-        status, _ = self._parse_response(response)
+        status, entry_count, _ = self._parse_response(response)
         if status == "ERR":
             code, msg = self._read_error(response)
             if code == 1:
                 raise USBFSNotFoundError(msg)
             raise USBFSIOError(msg)
         
-        if status != "OK":
+        if status != "OK" or entry_count is None:
             raise USBFSIOError(f"Unexpected response: {response}")
         
-        # Read directory listing lines
+        # Read directory listing lines (we know how many to expect)
         entries = []
-        while True:
+        for _ in range(entry_count):
             line = self.ser.readline().decode('ascii', errors='ignore').strip()
             if not line:
                 break
             
-            # Format: [D|F] <name> <size>
+            # Format: [D|F] <size> <name> for files, [D|F] <name> for directories
             parts = line.split(' ', 2)
             if len(parts) >= 2:
                 entry_type = parts[0]
-                name = parts[1]
-                size = int(parts[2]) if len(parts) > 2 else 0
-                entries.append((entry_type, name, size))
+                # Try to parse second part as size (if it's a number, it's a file)
+                try:
+                    size = int(parts[1])
+                    # It's a file: TYPE SIZE NAME
+                    name = parts[2] if len(parts) > 2 else ''
+                    entries.append((entry_type, name, size))
+                except ValueError:
+                    # It's a directory: TYPE NAME (no size)
+                    name = parts[1] if len(parts) > 1 else ''
+                    entries.append((entry_type, name, 0))
         
         return entries
     
@@ -239,7 +252,7 @@ class SPXConnection:
     
     def get(self, remote_path: str, local_path: str):
         """
-        Download file from RAMFS.
+        Download file from RAMFS using chunked transfer protocol.
         
         Args:
             remote_path: Path on device
@@ -248,33 +261,51 @@ class SPXConnection:
         cmd = f"GET {remote_path}"
         response = self._send_command(cmd)
         
-        status, file_size = self._parse_response(response)
+        status, file_size, chunk_size = self._parse_response(response)
         if status == "ERR":
             code, msg = self._read_error(response)
             if code == 1:
                 raise USBFSNotFoundError(msg)
             raise USBFSIOError(msg)
         
-        if status != "OK" or file_size is None:
+        if status != "OK" or file_size is None or chunk_size is None:
             raise USBFSIOError(f"Unexpected response: {response}")
         
         if self.show_progress:
             print(f"Downloading {remote_path} -> {local_path} ({self._format_size(file_size)})")
         
-        # Read binary data
+        # Request chunks until we have all data
         transferred = 0
         start_time = time.time()
+        offset = 0
+        
         with open(local_path, 'wb') as f:
-            remaining = file_size
-            while remaining > 0:
-                chunk_size = min(remaining, 4096)
-                data = self.ser.read(chunk_size)
-                if len(data) == 0:
-                    raise USBFSIOError("Connection closed during transfer")
-                f.write(data)
-                transferred += len(data)
-                remaining -= len(data)
-                self._show_progress(transferred, file_size, "Downloading")
+            while offset < file_size:
+                chunk_request_size = min(chunk_size, file_size - offset)
+                
+                # Send READY <offset> command
+                ready_cmd = f"READY {offset}\r\n"
+                self.ser.write(ready_cmd.encode('ascii'))
+                self.ser.flush()
+                
+                # Read binary chunk data
+                chunk_transferred = 0
+                while chunk_transferred < chunk_request_size:
+                    to_read = chunk_request_size - chunk_transferred
+                    data = self.ser.read(to_read)
+                    if len(data) == 0:
+                        raise USBFSIOError("Connection closed during transfer")
+                    f.write(data)
+                    chunk_transferred += len(data)
+                    transferred += len(data)
+                    self._show_progress(transferred, file_size, "Downloading")
+                
+                offset += chunk_transferred
+            
+            # Send OK to indicate we're done
+            ok_cmd = "OK\r\n"
+            self.ser.write(ok_cmd.encode('ascii'))
+            self.ser.flush()
         
         if self.show_progress:
             elapsed = time.time() - start_time
@@ -290,43 +321,61 @@ class SPXConnection:
             remote_path: Path on device
         """
         file_size = os.path.getsize(local_path)
-        cmd = f"PUT {remote_path} {file_size}\n"
+        cmd = f"PUT {file_size} {remote_path}\r\n"
         self.ser.write(cmd.encode('ascii'))
         self.ser.flush()
+        
+        # Wait for READY response with chunk size
+        ready_response = self.ser.readline().decode('ascii', errors='ignore').strip()
+        ready_status, max_chunk_size, _ = self._parse_response(ready_response)
+        if ready_status == "ERR":
+            code, msg = self._read_error(ready_response)
+            if code == 3:
+                raise USBFSExistsError(msg)
+            raise USBFSIOError(msg)
+        if ready_status != "READY" or max_chunk_size is None:
+            raise USBFSIOError(f"Expected READY, got: {ready_response}")
         
         if self.show_progress:
             print(f"Uploading {local_path} -> {remote_path} ({self._format_size(file_size)})")
         
-        # Send binary data immediately after command
+        # Send binary data in chunks and wait for OK after each chunk
         transferred = 0
         start_time = time.time()
         with open(local_path, 'rb') as f:
             remaining = file_size
             while remaining > 0:
-                chunk = f.read(4096)
+                chunk_size = min(max_chunk_size, remaining)
+                chunk = f.read(chunk_size)
                 if not chunk:
                     break
+                
+                # Send chunk
                 self.ser.write(chunk)
                 self.ser.flush()
                 transferred += len(chunk)
                 remaining -= len(chunk)
                 self._show_progress(transferred, file_size, "Uploading")
+                
+                # Wait for OK response with bytes received so far
+                ok_response = self.ser.readline().decode('ascii', errors='ignore').strip()
+                ok_status, bytes_received, _ = self._parse_response(ok_response)
+                if ok_status == "ERR":
+                    code, msg = self._read_error(ok_response)
+                    if code == 3:
+                        raise USBFSExistsError(msg)
+                    raise USBFSIOError(msg)
+                if ok_status != "OK" or bytes_received is None:
+                    raise USBFSIOError(f"Unexpected response: {ok_response}")
+                
+                # Verify bytes received matches what we've sent
+                if bytes_received != transferred:
+                    raise USBFSIOError(f"Bytes mismatch: sent {transferred}, device received {bytes_received}")
         
         if self.show_progress:
             elapsed = time.time() - start_time
             speed = transferred / elapsed if elapsed > 0 else 0
             print(f"\nUploaded {self._format_size(transferred)} in {elapsed:.1f}s ({self._format_size(speed)}/s)")
-        
-        # Read response after data transfer
-        response = self.ser.readline().decode('ascii', errors='ignore').strip()
-        status, _ = self._parse_response(response)
-        if status == "ERR":
-            code, msg = self._read_error(response)
-            if code == 3:
-                raise USBFSExistsError(msg)
-            raise USBFSIOError(msg)
-        if status != "OK":
-            raise USBFSIOError(f"Unexpected response: {response}")
     
     def mv(self, old_path: str, new_path: str):
         """
@@ -555,18 +604,6 @@ def find_free_port(start_port: int = 8000) -> int:
     raise RuntimeError(f"Could not find free port starting from {start_port}")
 
 
-def cmd_browser(args, show_progress: bool = True):
-    """Start web browser interface for RAMFS"""
-    # Import spx-browser module and run it
-    # Use importlib to handle the hyphenated module name
-    import importlib.util
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    browser_path = os.path.join(script_dir, 'spx-browser.py')
-    spec = importlib.util.spec_from_file_location("spx_browser", browser_path)
-    browser_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(browser_module)
-    browser_module.main()
-
 
 def main():
     parser = argparse.ArgumentParser(description='SPX - Spectranext tool')
@@ -611,12 +648,7 @@ def main():
     
     # AUTOBOOT command
     parser_autoboot = subparsers.add_parser('autoboot', help='Configure autoboot from xfs://ram/ and reboot ZX Spectrum')
-    
-    # BROWSER command
-    parser_browser = subparsers.add_parser('browser', help='Start web browser interface for RAMFS')
-    parser_browser.add_argument('--port', type=int, help='Port to listen on (default: auto-detect)')
-    parser_browser.add_argument('--host', type=str, default='127.0.0.1', help='Host to bind to (default: 127.0.0.1)')
-    
+
     args = parser.parse_args()
     
     if not args.command:
@@ -645,8 +677,6 @@ def main():
             cmd_reboot(args, show_progress)
         elif args.command == 'autoboot':
             cmd_autoboot(args, show_progress)
-        elif args.command == 'browser':
-            cmd_browser(args, show_progress)
     except USBFSNotFoundError as e:
         print(f"Error: Not found - {e}", file=sys.stderr)
         sys.exit(1)

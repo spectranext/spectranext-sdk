@@ -1,0 +1,58 @@
+#!/bin/bash
+# makebas wrapper - calls pymakebas.py
+# This provides compatibility with zmakebas command-line interface
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Get Python command
+# Prefers venv Python from SDK, falls back to system Python
+_get_python() {
+    local python_cmd=""
+    
+    # First, try venv Python from SDK directory
+    if [ -n "$SPX_SDK_DIR" ] && [ -d "$SPX_SDK_DIR/venv" ]; then
+        if [ -x "$SPX_SDK_DIR/venv/bin/python3" ]; then
+            python_cmd="$SPX_SDK_DIR/venv/bin/python3"
+            if "$python_cmd" --version >/dev/null 2>&1; then
+                echo "$python_cmd"
+                return 0
+            fi
+        elif [ -x "$SPX_SDK_DIR/venv/bin/python" ]; then
+            python_cmd="$SPX_SDK_DIR/venv/bin/python"
+            if "$python_cmd" --version >/dev/null 2>&1; then
+                echo "$python_cmd"
+                return 0
+            fi
+        fi
+    fi
+    
+    # Fallback to system Python
+    if command -v python3 >/dev/null 2>&1; then
+        python_cmd=$(command -v python3)
+        if [ -n "$python_cmd" ] && "$python_cmd" --version >/dev/null 2>&1; then
+            echo "$python_cmd"
+            return 0
+        fi
+    fi
+    
+    if command -v python >/dev/null 2>&1; then
+        python_cmd=$(command -v python)
+        if [ -n "$python_cmd" ] && "$python_cmd" --version >/dev/null 2>&1; then
+            echo "$python_cmd"
+            return 0
+        fi
+    fi
+    
+    echo "Error: Python not found" >&2
+    return 1
+}
+
+# Get Python executable
+PYTHON_CMD=$(_get_python)
+if [ $? -ne 0 ]; then
+    exit 1
+fi
+
+# Call pymakebas.py with all arguments
+exec "$PYTHON_CMD" "$SCRIPT_DIR/pymakebas.py" "$@"

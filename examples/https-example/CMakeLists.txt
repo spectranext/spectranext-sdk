@@ -20,8 +20,9 @@ target_link_options(https_example PUBLIC -debug -create-app)
 # Set boot BASIC program (optional)
 # This creates a boot.zx file that will be uploaded before your program
 spectranext_set_boot("
-10 %tapein \"https_example.tap\"
-20 LOAD \"\"
+10 PRINT \"Hello!\"
+20 %tapein \"https_example.tap\"
+30 LOAD \"\"
 ")
 
 # Add convenience targets (upload_bin, upload_tap, etc.)

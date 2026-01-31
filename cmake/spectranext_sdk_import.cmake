@@ -66,16 +66,16 @@ endfunction()
 # Creates boot.bas file, compiles it to boot.zx, and creates upload_boot target
 # Usage: spectranext_set_boot("10 PRINT \"Hello\"") or spectranext_set_boot("PRINT \"Hello\"" 20)
 function(spectranext_set_boot BOOT_BASIC)
-    # Find zmakebas
+    # Find makebas (Python wrapper)
     if(DEFINED ENV{SPECTRANEXT_SDK_PATH})
-        set(ZMAKEBAS_EXECUTABLE "$ENV{SPECTRANEXT_SDK_PATH}/bin/zmakebas")
+        set(ZMAKEBAS_EXECUTABLE "$ENV{SPECTRANEXT_SDK_PATH}/bin/makebas")
     else()
         # Try to find in PATH
-        find_program(ZMAKEBAS_EXECUTABLE zmakebas)
+        find_program(ZMAKEBAS_EXECUTABLE makebas)
     endif()
     
     if(NOT ZMAKEBAS_EXECUTABLE OR NOT EXISTS "${ZMAKEBAS_EXECUTABLE}")
-        message(WARNING "zmakebas not found, boot file will not be created")
+        message(WARNING "makebas not found, boot file will not be created")
         return()
     endif()
     
@@ -93,7 +93,7 @@ function(spectranext_set_boot BOOT_BASIC)
     
     file(WRITE "${BOOT_BAS_FILE}" "${BOOT_BASIC}\n")
     
-    # Compile boot.bas to boot.zx using zmakebas
+    # Compile boot.bas to boot.zx using makebas
     add_custom_command(
         OUTPUT "${BOOT_ZX_FILE}"
         COMMAND ${ZMAKEBAS_EXECUTABLE} -o "${BOOT_ZX_FILE}" -a 10 "${BOOT_BAS_FILE}"

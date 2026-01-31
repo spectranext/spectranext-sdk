@@ -12,7 +12,21 @@ import os
 import time
 import socket
 import tempfile
+import json
+import binascii
 from typing import Optional, Tuple
+
+# File locking for preventing concurrent instances
+try:
+    import fcntl  # Unix/Linux/macOS
+    HAS_FCNTL = True
+except ImportError:
+    HAS_FCNTL = False
+    try:
+        import msvcrt  # Windows
+        HAS_MSVCRT = True
+    except ImportError:
+        HAS_MSVCRT = False
 
 # USB vendor/product IDs for spectranext
 VENDOR_ID = 0x1337
@@ -103,6 +117,9 @@ class SPXConnection:
         self.ser.reset_input_buffer()
         self.ser.reset_output_buffer()
         
+        # Initialize request ID counter
+        self._request_id = 1
+        
         # Drain any leftover input (binary data from failed transfers, etc.)
         # Read with short timeout until nothing more is available
         self.ser.timeout = 0.1  # Short timeout for draining
@@ -114,21 +131,19 @@ class SPXConnection:
         # Restore normal timeout
         self.ser.timeout = 1
         
-        # Send STATUS command to verify connection is clean and ready
+        # Drain input buffer before sending STATUS to ensure clean state
+        self._drain_input()
+        
+        # Send STATUS JSON-RPC request to verify connection is clean and ready
         # Retry a few times in case device is busy
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                response = self._send_command("STATUS")
-                status, version, _ = self._parse_response(response)
-                if status == "OK":
-                    if version != 2:
-                        raise USBFSException(f"Unsupported protocol version: {version}. Expected version 2.")
-                    break
-                if attempt < max_retries - 1:
-                    time.sleep(0.1)  # Brief delay before retry
-                    continue
-                raise USBFSIOError(f"Connection not ready: {response}")
+                result = self._send_jsonrpc_request("status", {})
+                version = result.get("version")
+                if version != 2:
+                    raise USBFSException(f"Unsupported protocol version: {version}. Expected version 2.")
+                break
             except (serial.SerialTimeoutException, serial.SerialException) as e:
                 if attempt < max_retries - 1:
                     time.sleep(0.1)  # Brief delay before retry
@@ -137,46 +152,85 @@ class SPXConnection:
         
         self.show_progress = show_progress and sys.stdout.isatty()
     
+    def _drain_input(self):
+        """Drain any leftover data from input buffer"""
+        # Temporarily set short timeout for draining
+        old_timeout = self.ser.timeout
+        self.ser.timeout = 0.1
+        try:
+            while True:
+                try:
+                    data = self.ser.read(4096)  # Read in chunks
+                    if len(data) == 0:
+                        break
+                except serial.serialutil.SerialException as e:
+                    # Ignore "device reports readiness to read but returned no data" errors
+                    # This can happen during draining when device is busy or disconnected
+                    if "device reports readiness to read but returned no data" in str(e):
+                        break
+                    # Re-raise other serial exceptions
+                    raise
+        finally:
+            # Restore original timeout
+            self.ser.timeout = old_timeout
+    
     def _find_spx_port(self) -> Optional[str]:
         """Find the SPX CDC port (second interface)"""
         return find_spx_port_by_interface(USBFS_INTERFACE)
     
-    def _send_command(self, cmd: str) -> str:
-        """Send command and read response line"""
-        cmd_line = cmd + '\r\n'
-        self.ser.write(cmd_line.encode('ascii'))
+    def _send_jsonrpc_request(self, method: str, params: dict) -> dict:
+        """Send JSON-RPC request and return result"""
+        request_id = self._request_id
+        self._request_id += 1
+        
+        request = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+            "id": request_id
+        }
+        
+        request_json = json.dumps(request) + '\n'
+        self.ser.write(request_json.encode('utf-8'))
         self.ser.flush()
         
-        response = self.ser.readline().decode('ascii', errors='ignore').strip()
-        return response
-    
-    def _parse_response(self, response: str) -> Tuple[str, Optional[int], Optional[int]]:
-        """Parse response line into status and optional values"""
-        parts = response.split(' ')
-        status = parts[0]
-        values = []
+        # Read response line
+        response_line = self.ser.readline().decode('utf-8', errors='ignore').strip()
+        if not response_line:
+            raise USBFSIOError("No response received")
         
-        # Parse all numeric values after the status
-        for i in range(1, len(parts)):
-            try:
-                value = int(parts[i])
-                values.append(value)
-            except ValueError:
-                # Stop at first non-numeric value
-                break
+        try:
+            response = json.loads(response_line)
+        except json.JSONDecodeError as e:
+            raise USBFSIOError(f"Invalid JSON response: {e}")
         
-        # Return status and all parsed values (for backward compatibility, pad with None)
-        return status, values[0] if len(values) > 0 else None, values[1] if len(values) > 1 else None
-    
-    def _read_error(self, response: str) -> Tuple[int, str]:
-        """Parse error response"""
-        # Format: ERR <code> <message>
-        parts = response.split(' ', 2)
-        if len(parts) < 3:
-            return 5, "Unknown error"
-        code = int(parts[1])
-        message = parts[2]
-        return code, message
+        # Check for JSON-RPC error
+        if "error" in response:
+            error = response["error"]
+            error_code = error.get("code")
+            error_message = error.get("message", "Unknown error")
+            error_data = error.get("data", {})
+            
+            # Extract file error code if present
+            file_error = error_data.get("file_error")
+            if file_error == 1:
+                raise USBFSNotFoundError(error_data.get("message", error_message))
+            elif file_error == 2:
+                raise USBFSPermissionError(error_data.get("message", error_message))
+            elif file_error == 3:
+                raise USBFSExistsError(error_data.get("message", error_message))
+            elif file_error == 4:
+                raise USBFSInvalidError(error_data.get("message", error_message))
+            elif file_error == 5:
+                raise USBFSIOError(error_data.get("message", error_message))
+            else:
+                raise USBFSIOError(f"{error_message} (code: {error_code})")
+        
+        # Return result
+        if "result" not in response:
+            raise USBFSIOError("No result in response")
+        
+        return response["result"]
     
     def ls(self, path: str = "/") -> list:
         """
@@ -188,40 +242,14 @@ class SPXConnection:
         Returns:
             List of tuples: (type, name, size) where type is 'D' or 'F'
         """
-        cmd = f"LS {path}"
-        response = self._send_command(cmd)
+        result = self._send_jsonrpc_request("ls", {"path": path})
         
-        status, entry_count, _ = self._parse_response(response)
-        if status == "ERR":
-            code, msg = self._read_error(response)
-            if code == 1:
-                raise USBFSNotFoundError(msg)
-            raise USBFSIOError(msg)
-        
-        if status != "OK" or entry_count is None:
-            raise USBFSIOError(f"Unexpected response: {response}")
-        
-        # Read directory listing lines (we know how many to expect)
         entries = []
-        for _ in range(entry_count):
-            line = self.ser.readline().decode('ascii', errors='ignore').strip()
-            if not line:
-                break
-            
-            # Format: [D|F] <size> <name> for files, [D|F] <name> for directories
-            parts = line.split(' ', 2)
-            if len(parts) >= 2:
-                entry_type = parts[0]
-                # Try to parse second part as size (if it's a number, it's a file)
-                try:
-                    size = int(parts[1])
-                    # It's a file: TYPE SIZE NAME
-                    name = parts[2] if len(parts) > 2 else ''
-                    entries.append((entry_type, name, size))
-                except ValueError:
-                    # It's a directory: TYPE NAME (no size)
-                    name = parts[1] if len(parts) > 1 else ''
-                    entries.append((entry_type, name, 0))
+        for entry in result.get("entries", []):
+            entry_type = entry.get("type", "F")
+            name = entry.get("name", "")
+            size = entry.get("size", 0) if entry_type == "F" else 0
+            entries.append((entry_type, name, size))
         
         return entries
     
@@ -252,24 +280,16 @@ class SPXConnection:
     
     def get(self, remote_path: str, local_path: str):
         """
-        Download file from RAMFS using chunked transfer protocol.
+        Download file from RAMFS using chunked JSON-RPC protocol.
         
         Args:
             remote_path: Path on device
             local_path: Local file path
         """
-        cmd = f"GET {remote_path}"
-        response = self._send_command(cmd)
-        
-        status, file_size, chunk_size = self._parse_response(response)
-        if status == "ERR":
-            code, msg = self._read_error(response)
-            if code == 1:
-                raise USBFSNotFoundError(msg)
-            raise USBFSIOError(msg)
-        
-        if status != "OK" or file_size is None or chunk_size is None:
-            raise USBFSIOError(f"Unexpected response: {response}")
+        # Start GET operation
+        result = self._send_jsonrpc_request("get", {"path": remote_path})
+        file_size = int(result.get("size", 0))
+        chunk_size = int(result.get("chunk_size", 8192))
         
         if self.show_progress:
             print(f"Downloading {remote_path} -> {local_path} ({self._format_size(file_size)})")
@@ -283,29 +303,21 @@ class SPXConnection:
             while offset < file_size:
                 chunk_request_size = min(chunk_size, file_size - offset)
                 
-                # Send READY <offset> command
-                ready_cmd = f"READY {offset}\r\n"
-                self.ser.write(ready_cmd.encode('ascii'))
-                self.ser.flush()
+                # Request chunk
+                chunk_result = self._send_jsonrpc_request("get_chunk", {
+                    "offset": offset,
+                    "size": chunk_request_size
+                })
                 
-                # Read binary chunk data
-                chunk_transferred = 0
-                while chunk_transferred < chunk_request_size:
-                    to_read = chunk_request_size - chunk_transferred
-                    data = self.ser.read(to_read)
-                    if len(data) == 0:
-                        raise USBFSIOError("Connection closed during transfer")
-                    f.write(data)
-                    chunk_transferred += len(data)
-                    transferred += len(data)
-                    self._show_progress(transferred, file_size, "Downloading")
+                # Decode hex data
+                data_hex = chunk_result.get("data", "")
+                chunk_data = binascii.unhexlify(data_hex)
+                chunk_received = len(chunk_data)
                 
-                offset += chunk_transferred
-            
-            # Send OK to indicate we're done
-            ok_cmd = "OK\r\n"
-            self.ser.write(ok_cmd.encode('ascii'))
-            self.ser.flush()
+                f.write(chunk_data)
+                transferred += chunk_received
+                offset += chunk_received
+                self._show_progress(transferred, file_size, "Downloading")
         
         if self.show_progress:
             elapsed = time.time() - start_time
@@ -314,63 +326,51 @@ class SPXConnection:
     
     def put(self, local_path: str, remote_path: str):
         """
-        Upload file to RAMFS.
+        Upload file to RAMFS using chunked JSON-RPC protocol.
         
         Args:
             local_path: Local file path
             remote_path: Path on device
         """
         file_size = os.path.getsize(local_path)
-        cmd = f"PUT {file_size} {remote_path}\r\n"
-        self.ser.write(cmd.encode('ascii'))
-        self.ser.flush()
         
-        # Wait for READY response with chunk size
-        ready_response = self.ser.readline().decode('ascii', errors='ignore').strip()
-        ready_status, max_chunk_size, _ = self._parse_response(ready_response)
-        if ready_status == "ERR":
-            code, msg = self._read_error(ready_response)
-            if code == 3:
-                raise USBFSExistsError(msg)
-            raise USBFSIOError(msg)
-        if ready_status != "READY" or max_chunk_size is None:
-            raise USBFSIOError(f"Expected READY, got: {ready_response}")
+        # Start PUT operation
+        result = self._send_jsonrpc_request("put", {
+            "path": remote_path,
+            "size": file_size
+        })
+        max_chunk_size = int(result.get("chunk_size", 8192))
         
         if self.show_progress:
             print(f"Uploading {local_path} -> {remote_path} ({self._format_size(file_size)})")
         
-        # Send binary data in chunks and wait for OK after each chunk
+        # Send binary data in chunks
         transferred = 0
         start_time = time.time()
         with open(local_path, 'rb') as f:
-            remaining = file_size
-            while remaining > 0:
-                chunk_size = min(max_chunk_size, remaining)
+            offset = 0
+            while offset < file_size:
+                chunk_size = min(max_chunk_size, file_size - offset)
                 chunk = f.read(chunk_size)
                 if not chunk:
                     break
                 
+                # Hex encode chunk
+                chunk_hex = binascii.hexlify(chunk).decode('ascii')
+                
                 # Send chunk
-                self.ser.write(chunk)
-                self.ser.flush()
-                transferred += len(chunk)
-                remaining -= len(chunk)
+                chunk_result = self._send_jsonrpc_request("put_chunk", {
+                    "data": chunk_hex,
+                    "offset": offset
+                })
+                
+                bytes_received = int(chunk_result.get("received", 0))
+                transferred = bytes_received
+                offset += len(chunk)
                 self._show_progress(transferred, file_size, "Uploading")
-                
-                # Wait for OK response with bytes received so far
-                ok_response = self.ser.readline().decode('ascii', errors='ignore').strip()
-                ok_status, bytes_received, _ = self._parse_response(ok_response)
-                if ok_status == "ERR":
-                    code, msg = self._read_error(ok_response)
-                    if code == 3:
-                        raise USBFSExistsError(msg)
-                    raise USBFSIOError(msg)
-                if ok_status != "OK" or bytes_received is None:
-                    raise USBFSIOError(f"Unexpected response: {ok_response}")
-                
-                # Verify bytes received matches what we've sent
-                if bytes_received != transferred:
-                    raise USBFSIOError(f"Bytes mismatch: sent {transferred}, device received {bytes_received}")
+        
+        # Complete PUT operation
+        self._send_jsonrpc_request("put_complete", {})
         
         if self.show_progress:
             elapsed = time.time() - start_time
@@ -385,20 +385,10 @@ class SPXConnection:
             old_path: Source path
             new_path: Destination path
         """
-        cmd = f"MV {old_path} {new_path}"
-        response = self._send_command(cmd)
-        
-        status, _ = self._parse_response(response)
-        if status == "ERR":
-            code, msg = self._read_error(response)
-            if code == 1:
-                raise USBFSNotFoundError(msg)
-            if code == 3:
-                raise USBFSExistsError(msg)
-            raise USBFSIOError(msg)
-        
-        if status != "OK":
-            raise USBFSIOError(f"Unexpected response: {response}")
+        self._send_jsonrpc_request("mv", {
+            "old_path": old_path,
+            "new_path": new_path
+        })
     
     def rm(self, path: str):
         """
@@ -407,18 +397,7 @@ class SPXConnection:
         Args:
             path: File path
         """
-        cmd = f"RM {path}"
-        response = self._send_command(cmd)
-        
-        status, _ = self._parse_response(response)
-        if status == "ERR":
-            code, msg = self._read_error(response)
-            if code == 1:
-                raise USBFSNotFoundError(msg)
-            raise USBFSIOError(msg)
-        
-        if status != "OK":
-            raise USBFSIOError(f"Unexpected response: {response}")
+        self._send_jsonrpc_request("rm", {"path": path})
     
     def mkdir(self, path: str):
         """
@@ -427,18 +406,7 @@ class SPXConnection:
         Args:
             path: Directory path
         """
-        cmd = f"MKDIR {path}"
-        response = self._send_command(cmd)
-        
-        status, _ = self._parse_response(response)
-        if status == "ERR":
-            code, msg = self._read_error(response)
-            if code == 3:
-                raise USBFSExistsError(msg)
-            raise USBFSIOError(msg)
-        
-        if status != "OK":
-            raise USBFSIOError(f"Unexpected response: {response}")
+        self._send_jsonrpc_request("mkdir", {"path": path})
     
     def rmdir(self, path: str):
         """
@@ -447,50 +415,146 @@ class SPXConnection:
         Args:
             path: Directory path
         """
-        cmd = f"RMDIR {path}"
-        response = self._send_command(cmd)
-        
-        status, _ = self._parse_response(response)
-        if status == "ERR":
-            code, msg = self._read_error(response)
-            if code == 1:
-                raise USBFSNotFoundError(msg)
-            if code == 2:
-                raise USBFSPermissionError(msg)
-            raise USBFSIOError(msg)
-        
-        if status != "OK":
-            raise USBFSIOError(f"Unexpected response: {response}")
+        self._send_jsonrpc_request("rmdir", {"path": path})
     
     def reboot(self):
         """
         Trigger ZX Spectrum reboot.
         """
-        cmd = "REBOOT"
-        response = self._send_command(cmd)
-        
-        status, _ = self._parse_response(response)
-        if status != "OK":
-            raise USBFSIOError(f"Unexpected response: {response}")
+        self._send_jsonrpc_request("reboot", {})
     
     def autoboot(self):
         """
         Configure autoboot from xfs://ram/ and reboot ZX Spectrum.
         """
-        cmd = "AUTOBOOT"
-        response = self._send_command(cmd)
-        
-        status, _ = self._parse_response(response)
-        if status == "ERR":
-            code, msg = self._read_error(response)
-            raise USBFSIOError(f"Error {code}: {msg}")
-        if status != "OK":
-            raise USBFSIOError(f"Unexpected response: {response}")
+        self._send_jsonrpc_request("autoboot", {})
     
     def close(self):
         """Close connection"""
         if self.ser and self.ser.is_open:
             self.ser.close()
+
+
+class SPXLock:
+    """File lock to prevent concurrent SPX instances"""
+    
+    def __init__(self):
+        """Initialize lock file path"""
+        # Use user's home directory or temp directory
+        if os.name == 'nt':  # Windows
+            lock_dir = os.path.join(os.environ.get('TEMP', os.environ.get('TMP', tempfile.gettempdir())), 'spx')
+        else:  # Unix/Linux/macOS
+            lock_dir = os.path.join(os.path.expanduser('~'), '.spx')
+        
+        # Create lock directory if it doesn't exist
+        os.makedirs(lock_dir, exist_ok=True)
+        
+        self.lock_file_path = os.path.join(lock_dir, 'spx.lock')
+        self.lock_file = None
+    
+    def acquire(self):
+        """Acquire exclusive lock, waiting up to 5 seconds if another process holds it"""
+        max_wait_time = 5.0  # seconds
+        check_interval = 0.1  # seconds
+        waited_time = 0.0
+        
+        while waited_time < max_wait_time:
+            try:
+                self.lock_file = open(self.lock_file_path, 'w')
+                
+                if HAS_FCNTL:
+                    # Unix/Linux/macOS: use fcntl
+                    try:
+                        fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        # Lock acquired successfully
+                        return True
+                    except IOError:
+                        # Lock is held by another process
+                        self.lock_file.close()
+                        self.lock_file = None
+                        if waited_time < max_wait_time:
+                            # Wait a bit and retry
+                            time.sleep(check_interval)
+                            waited_time += check_interval
+                            continue
+                        else:
+                            # Timeout reached
+                            raise USBFSException(
+                                "Another SPX process is already running. "
+                                "Please wait for it to complete or terminate it if it's stuck."
+                            )
+                elif HAS_MSVCRT:
+                    # Windows: use msvcrt
+                    try:
+                        msvcrt.locking(self.lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                        # Lock acquired successfully
+                        return True
+                    except IOError:
+                        # Lock is held by another process
+                        self.lock_file.close()
+                        self.lock_file = None
+                        if waited_time < max_wait_time:
+                            # Wait a bit and retry
+                            time.sleep(check_interval)
+                            waited_time += check_interval
+                            continue
+                        else:
+                            # Timeout reached
+                            raise USBFSException(
+                                "Another SPX process is already running. "
+                                "Please wait for it to complete or terminate it if it's stuck."
+                            )
+                else:
+                    # Fallback: no locking available
+                    # Just write PID to file - best effort
+                    self.lock_file.write(str(os.getpid()))
+                    self.lock_file.flush()
+                    return True
+            except USBFSException:
+                raise
+            except Exception as e:
+                if self.lock_file:
+                    self.lock_file.close()
+                    self.lock_file = None
+                # If locking fails, warn but don't block (graceful degradation)
+                print(f"Warning: Could not acquire lock: {e}", file=sys.stderr)
+                return False
+        
+        # Should not reach here, but just in case
+        raise USBFSException(
+            "Another SPX process is already running. "
+            "Please wait for it to complete or terminate it if it's stuck."
+        )
+    
+    def release(self):
+        """Release lock"""
+        if self.lock_file:
+            try:
+                if HAS_FCNTL:
+                    fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_UN)
+                elif HAS_MSVCRT:
+                    msvcrt.locking(self.lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                
+                self.lock_file.close()
+                self.lock_file = None
+                
+                # Try to remove lock file (ignore errors)
+                try:
+                    if os.path.exists(self.lock_file_path):
+                        os.remove(self.lock_file_path)
+                except:
+                    pass
+            except:
+                pass
+    
+    def __enter__(self):
+        """Context manager entry"""
+        self.acquire()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit"""
+        self.release()
 
 
 # Command-line interface functions
@@ -604,6 +668,18 @@ def find_free_port(start_port: int = 8000) -> int:
     raise RuntimeError(f"Could not find free port starting from {start_port}")
 
 
+def cmd_browser(args, show_progress: bool = True):
+    """Start web browser interface for RAMFS"""
+    # Import spx-browser module and run it
+    # Use importlib to handle the hyphenated module name
+    import importlib.util
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    browser_path = os.path.join(script_dir, 'spx-browser.py')
+    spec = importlib.util.spec_from_file_location("spx_browser", browser_path)
+    browser_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(browser_module)
+    browser_module.main()
+
 
 def main():
     parser = argparse.ArgumentParser(description='SPX - Spectranext tool')
@@ -648,11 +724,24 @@ def main():
     
     # AUTOBOOT command
     parser_autoboot = subparsers.add_parser('autoboot', help='Configure autoboot from xfs://ram/ and reboot ZX Spectrum')
-
+    
+    # BROWSER command
+    parser_browser = subparsers.add_parser('browser', help='Start web browser interface for RAMFS')
+    parser_browser.add_argument('--port', type=int, help='Port to listen on (default: auto-detect)')
+    parser_browser.add_argument('--host', type=str, default='127.0.0.1', help='Host to bind to (default: 127.0.0.1)')
+    
     args = parser.parse_args()
     
     if not args.command:
         parser.print_help()
+        sys.exit(1)
+    
+    # Acquire lock to prevent concurrent instances
+    lock = SPXLock()
+    try:
+        lock.acquire()
+    except USBFSException as e:
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
     
     try:
@@ -677,6 +766,8 @@ def main():
             cmd_reboot(args, show_progress)
         elif args.command == 'autoboot':
             cmd_autoboot(args, show_progress)
+        elif args.command == 'browser':
+            cmd_browser(args, show_progress)
     except USBFSNotFoundError as e:
         print(f"Error: Not found - {e}", file=sys.stderr)
         sys.exit(1)
@@ -695,8 +786,10 @@ def main():
     except USBFSException as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+    finally:
+        # Always release lock
+        lock.release()
 
 
 if __name__ == '__main__':
     main()
-

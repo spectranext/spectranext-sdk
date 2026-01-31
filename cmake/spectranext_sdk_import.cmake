@@ -1,6 +1,28 @@
 # spectranext_sdk_import.cmake
 # CMake module for Spectranext SDK - sets up z88dk toolchain and provides convenience targets
 
+# Find and set SPX_SCRIPT and SPX_PYTHON_PATH variables
+# These are exported as cache variables for use in custom operations
+# Set at module load time so they're always available
+if(NOT DEFINED SPX_SCRIPT)
+    if(DEFINED ENV{SPX_SDK_DIR})
+        set(SPX_SCRIPT "$ENV{SPX_SDK_DIR}/bin/spx.py" CACHE FILEPATH "Path to spx.py script")
+        # Use venv Python from SDK
+        if(EXISTS "$ENV{SPX_SDK_DIR}/venv/bin/python3")
+            set(SPX_PYTHON_PATH "$ENV{SPX_SDK_DIR}/venv/bin/python3" CACHE FILEPATH "Path to Python executable for SPX tools")
+        elseif(EXISTS "$ENV{SPX_SDK_DIR}/venv/bin/python")
+            set(SPX_PYTHON_PATH "$ENV{SPX_SDK_DIR}/venv/bin/python" CACHE FILEPATH "Path to Python executable for SPX tools")
+        endif()
+    elseif(DEFINED ENV{SPECTRANEXT_SDK_PATH})
+        set(SPX_SCRIPT "$ENV{SPECTRANEXT_SDK_PATH}/bin/spx.py" CACHE FILEPATH "Path to spx.py script")
+        if(EXISTS "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3")
+            set(SPX_PYTHON_PATH "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3" CACHE FILEPATH "Path to Python executable for SPX tools")
+        elseif(EXISTS "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python")
+            set(SPX_PYTHON_PATH "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python" CACHE FILEPATH "Path to Python executable for SPX tools")
+        endif()
+    endif()
+endif()
+
 # Initialize Spectranext SDK
 # Sets up toolchain, includes directories, and configures z88dk
 function(spectranext_sdk_init)
@@ -57,31 +79,13 @@ function(spectranext_set_boot BOOT_BASIC)
         return()
     endif()
     
-    # Find spx.py script and venv Python
-    if(DEFINED ENV{SPX_SDK_DIR})
-        set(SPX_SCRIPT "$ENV{SPX_SDK_DIR}/bin/spx.py")
-        if(EXISTS "$ENV{SPX_SDK_DIR}/venv/bin/python3")
-            set(PYTHON_EXECUTABLE "$ENV{SPX_SDK_DIR}/venv/bin/python3")
-        elseif(EXISTS "$ENV{SPX_SDK_DIR}/venv/bin/python")
-            set(PYTHON_EXECUTABLE "$ENV{SPX_SDK_DIR}/venv/bin/python")
-        else()
-            message(WARNING "SDK venv Python not found, boot upload target will not be created")
-            return()
-        endif()
-    elseif(DEFINED ENV{SPECTRANEXT_SDK_PATH})
-        set(SPX_SCRIPT "$ENV{SPECTRANEXT_SDK_PATH}/bin/spx.py")
-        if(EXISTS "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3")
-            set(PYTHON_EXECUTABLE "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3")
-        elseif(EXISTS "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python")
-            set(PYTHON_EXECUTABLE "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python")
-        else()
-            message(WARNING "SDK venv Python not found, boot upload target will not be created")
-            return()
-        endif()
-    else()
-        message(WARNING "SPX_SDK_DIR or SPECTRANEXT_SDK_PATH not set, boot upload target will not be created")
+    # Use exported SPX variables
+    if(NOT DEFINED SPX_SCRIPT OR NOT DEFINED SPX_PYTHON_PATH)
+        message(WARNING "SPX_SCRIPT or SPX_PYTHON_PATH not found, boot upload target will not be created")
         return()
     endif()
+    
+    set(PYTHON_EXECUTABLE ${SPX_PYTHON_PATH})
     
     # Create boot.bas file in binary directory
     set(BOOT_BAS_FILE "${CMAKE_BINARY_DIR}/boot.bas")
@@ -118,33 +122,13 @@ endfunction()
 # Also creates convenience targets: program, upload, autoboot
 # Usage: spectranext_add_extra_outputs(my_project)
 function(spectranext_add_extra_outputs PROJECT_NAME)
-    # Find spx.py script and venv Python
-    if(DEFINED ENV{SPX_SDK_DIR})
-        set(SPX_SCRIPT "$ENV{SPX_SDK_DIR}/bin/spx.py")
-        # Use venv Python from SDK
-        if(EXISTS "$ENV{SPX_SDK_DIR}/venv/bin/python3")
-            set(PYTHON_EXECUTABLE "$ENV{SPX_SDK_DIR}/venv/bin/python3")
-        elseif(EXISTS "$ENV{SPX_SDK_DIR}/venv/bin/python")
-            set(PYTHON_EXECUTABLE "$ENV{SPX_SDK_DIR}/venv/bin/python")
-        else()
-            message(WARNING "SDK venv Python not found at $ENV{SPX_SDK_DIR}/venv/bin/python3, cannot create upload targets")
-            return()
-        endif()
-    elseif(DEFINED ENV{SPECTRANEXT_SDK_PATH})
-        set(SPX_SCRIPT "$ENV{SPECTRANEXT_SDK_PATH}/bin/spx.py")
-        # Use venv Python from SDK
-        if(EXISTS "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3")
-            set(PYTHON_EXECUTABLE "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3")
-        elseif(EXISTS "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python")
-            set(PYTHON_EXECUTABLE "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python")
-        else()
-            message(WARNING "SDK venv Python not found at $ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3, cannot create upload targets")
-            return()
-        endif()
-    else()
-        message(WARNING "SPX_SDK_DIR or SPECTRANEXT_SDK_PATH not set, cannot create upload targets")
+    # Use exported SPX variables
+    if(NOT DEFINED SPX_SCRIPT OR NOT DEFINED SPX_PYTHON_PATH)
+        message(WARNING "SPX_SCRIPT or SPX_PYTHON_PATH not found, cannot create upload targets")
         return()
     endif()
+    
+    set(PYTHON_EXECUTABLE ${SPX_PYTHON_PATH})
     
     # Determine binary paths from target properties (.bin and .tap)
     if(TARGET ${PROJECT_NAME})

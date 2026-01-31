@@ -37,6 +37,8 @@ cd spectranext-sdk
 .\install.ps1
 ```
 
+It would prompt you to add SDK to PATH, so you can use the tools from anywhere.
+
 **Prerequisites for Windows:**
 - Python 3.7 or later (download from https://www.python.org/downloads/)
   - Make sure to check "Add Python to PATH" during installation
@@ -209,5 +211,7 @@ You can read on xfs tools a little bit more here: https://docs.spectranext.net/d
 - `spx-autoboot` - Configure autoboot from xfs://ram/ and reboot
 - `spx-terminal` - Show terminal connection info (macOS/Linux: launches minicom; Windows: shows connection settings)
 
-Run `spx-help` for a list of available commands.
+**Note:** On Windows, use `spx.bat ls`, `spx.bat get`, etc. instead of `spx-ls`, `spx-get`, etc.
+
+Run `spx-help` for a list of available commands (or `spx.bat help` on Windows).
 

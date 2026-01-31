@@ -5,10 +5,10 @@ Provides binutils-style commands for browsing and managing RAMFS over USB CDC.
 """
 
 import sys
+import os
 import serial
 import serial.tools.list_ports
 import argparse
-import os
 import time
 import socket
 import tempfile
@@ -16,21 +16,14 @@ import json
 import binascii
 from typing import Optional, Tuple
 
-# File locking for preventing concurrent instances
-try:
-    import fcntl  # Unix/Linux/macOS
-    HAS_FCNTL = True
-except ImportError:
-    HAS_FCNTL = False
-    try:
-        import msvcrt  # Windows
-        HAS_MSVCRT = True
-    except ImportError:
-        HAS_MSVCRT = False
-
-# USB vendor/product IDs for spectranext
-VENDOR_ID = 0x1337
-PRODUCT_ID = 0x0001
+# Import device detection from spectranext-detect.py
+# Use importlib to handle relative imports
+import importlib.util
+_detect_path = os.path.join(os.path.dirname(__file__), 'spectranext-detect.py')
+_spec = importlib.util.spec_from_file_location('spectranext_detect', _detect_path)
+_spectranext_detect = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_spectranext_detect)
+find_spectranext_devices = _spectranext_detect.find_spectranext_devices
 
 # CDC interface numbers (0 = console, 1 = USBFS, 2 = GDB)
 USBFS_INTERFACE = 1
@@ -41,27 +34,17 @@ def find_spx_port_by_interface(interface: int = 1) -> Optional[str]:
     Find SPX port by interface number.
     
     Args:
-        interface: Interface number (0 = console, 1 = USBFS)
+        interface: Interface number (0 = console/cli, 1 = USBFS)
     
     Returns:
         Port device path or None if not found
     """
-    ports = serial.tools.list_ports.comports()
+    devices, _ = find_spectranext_devices()
     
-    # Find spectranext device
-    spectranext_ports = []
-    for port in ports:
-        if port.vid == VENDOR_ID and port.pid == PRODUCT_ID:
-            spectranext_ports.append(port.device)
-    
-    # Sort ports - typically second interface comes after first
-    spectranext_ports.sort()
-    
-    if len(spectranext_ports) > interface:
-        return spectranext_ports[interface]
-    elif len(spectranext_ports) == 1 and interface == 0:
-        # Only one port found, assume it's console if looking for interface 0
-        return spectranext_ports[0]
+    if interface == 0:
+        return devices.get('cli')
+    elif interface == 1:
+        return devices.get('usbfs')
     
     return None
 
@@ -113,6 +96,23 @@ class SPXConnection:
         if port is None:
             raise USBFSException("Could not find SPX device. Make sure device is connected.")
         
+        self.port = port
+        
+        # Get USB device info if available
+        self.usb_info = None
+        try:
+            devices, serial_number = find_spectranext_devices()
+            for dev_type, dev_port in devices.items():
+                if dev_port == port:
+                    self.usb_info = {
+                        "port": port,
+                        "type": dev_type,
+                        "serial": serial_number
+                    }
+                    break
+        except:
+            pass
+        
         self.ser = serial.Serial(port, 115200, timeout=1)
         self.ser.reset_input_buffer()
         self.ser.reset_output_buffer()
@@ -137,12 +137,10 @@ class SPXConnection:
         # Send STATUS JSON-RPC request to verify connection is clean and ready
         # Retry a few times in case device is busy
         max_retries = 3
+        status_result = None
         for attempt in range(max_retries):
             try:
-                result = self._send_jsonrpc_request("status", {})
-                version = result.get("version")
-                if version != 2:
-                    raise USBFSException(f"Unsupported protocol version: {version}. Expected version 2.")
+                status_result = self._send_jsonrpc_request("status", {})
                 break
             except (serial.SerialTimeoutException, serial.SerialException) as e:
                 if attempt < max_retries - 1:
@@ -435,118 +433,6 @@ class SPXConnection:
             self.ser.close()
 
 
-class SPXLock:
-    """File lock to prevent concurrent SPX instances"""
-    
-    def __init__(self):
-        """Initialize lock file path"""
-        # Use user's home directory or temp directory
-        if os.name == 'nt':  # Windows
-            lock_dir = os.path.join(os.environ.get('TEMP', os.environ.get('TMP', tempfile.gettempdir())), 'spx')
-        else:  # Unix/Linux/macOS
-            lock_dir = os.path.join(os.path.expanduser('~'), '.spx')
-        
-        # Create lock directory if it doesn't exist
-        os.makedirs(lock_dir, exist_ok=True)
-        
-        self.lock_file_path = os.path.join(lock_dir, 'spx.lock')
-        self.lock_file = None
-    
-    def acquire(self):
-        """Acquire exclusive lock, waiting up to 5 seconds if another process holds it"""
-        max_wait_time = 5.0  # seconds
-        check_interval = 0.1  # seconds
-        waited_time = 0.0
-        
-        while waited_time < max_wait_time:
-            try:
-                self.lock_file = open(self.lock_file_path, 'w')
-                
-                if HAS_FCNTL:
-                    # Unix/Linux/macOS: use fcntl
-                    try:
-                        fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        # Lock acquired successfully
-                        return True
-                    except IOError:
-                        # Lock is held by another process
-                        self.lock_file.close()
-                        self.lock_file = None
-                        if waited_time < max_wait_time:
-                            # Wait a bit and retry
-                            time.sleep(check_interval)
-                            waited_time += check_interval
-                            continue
-                        else:
-                            # Timeout reached
-                            raise USBFSException(
-                                "Another SPX process is already running. "
-                                "Please wait for it to complete or terminate it if it's stuck."
-                            )
-                elif HAS_MSVCRT:
-                    # Windows: use msvcrt
-                    try:
-                        msvcrt.locking(self.lock_file.fileno(), msvcrt.LK_NBLCK, 1)
-                        # Lock acquired successfully
-                        return True
-                    except IOError:
-                        # Lock is held by another process
-                        self.lock_file.close()
-                        self.lock_file = None
-                        if waited_time < max_wait_time:
-                            # Wait a bit and retry
-                            time.sleep(check_interval)
-                            waited_time += check_interval
-                            continue
-                        else:
-                            # Timeout reached
-                            raise USBFSException(
-                                "Another SPX process is already running. "
-                                "Please wait for it to complete or terminate it if it's stuck."
-                            )
-                else:
-                    # Fallback: no locking available
-                    # Just write PID to file - best effort
-                    self.lock_file.write(str(os.getpid()))
-                    self.lock_file.flush()
-                    return True
-            except USBFSException:
-                raise
-            except Exception as e:
-                if self.lock_file:
-                    self.lock_file.close()
-                    self.lock_file = None
-                # If locking fails, warn but don't block (graceful degradation)
-                print(f"Warning: Could not acquire lock: {e}", file=sys.stderr)
-                return False
-        
-        # Should not reach here, but just in case
-        raise USBFSException(
-            "Another SPX process is already running. "
-            "Please wait for it to complete or terminate it if it's stuck."
-        )
-    
-    def release(self):
-        """Release lock"""
-        if self.lock_file:
-            try:
-                if HAS_FCNTL:
-                    fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_UN)
-                elif HAS_MSVCRT:
-                    msvcrt.locking(self.lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-                
-                self.lock_file.close()
-                self.lock_file = None
-                
-                # Try to remove lock file (ignore errors)
-                try:
-                    if os.path.exists(self.lock_file_path):
-                        os.remove(self.lock_file_path)
-                except:
-                    pass
-            except:
-                pass
-    
     def __enter__(self):
         """Context manager entry"""
         self.acquire()
@@ -736,18 +622,10 @@ def main():
         parser.print_help()
         sys.exit(1)
     
-    # Acquire lock to prevent concurrent instances
-    lock = SPXLock()
-    try:
-        lock.acquire()
-    except USBFSException as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+    # Create connection with progress setting
+    show_progress = not args.no_progress
     
     try:
-        # Create connection with progress setting
-        show_progress = not args.no_progress
-        
         if args.command == 'ls':
             cmd_ls(args, show_progress)
         elif args.command == 'get':
@@ -786,9 +664,6 @@ def main():
     except USBFSException as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
-    finally:
-        # Always release lock
-        lock.release()
 
 
 if __name__ == '__main__':

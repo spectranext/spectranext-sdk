@@ -1,24 +1,58 @@
 # spectranext_sdk_import.cmake
 # CMake module for Spectranext SDK - sets up z88dk toolchain and provides convenience targets
 
+# Skip CMake's compiler test - z88dk toolchain handles compilation
+# These must be set before project() is called
+if(NOT DEFINED CMAKE_C_COMPILER_WORKS)
+    set(CMAKE_C_COMPILER_WORKS TRUE CACHE INTERNAL "C compiler works (z88dk toolchain)")
+endif()
+if(NOT DEFINED CMAKE_CXX_COMPILER_WORKS)
+    set(CMAKE_CXX_COMPILER_WORKS TRUE CACHE INTERNAL "C++ compiler works (z88dk toolchain)")
+endif()
+
 # Find and set SPX_SCRIPT and SPX_PYTHON_PATH variables
 # These are exported as cache variables for use in custom operations
 # Set at module load time so they're always available
 if(NOT DEFINED SPX_SCRIPT)
-    if(DEFINED ENV{SPX_SDK_DIR})
-        set(SPX_SCRIPT "$ENV{SPX_SDK_DIR}/bin/spx.py" CACHE FILEPATH "Path to spx.py script")
-        # Use venv Python from SDK
-        if(EXISTS "$ENV{SPX_SDK_DIR}/venv/bin/python3")
-            set(SPX_PYTHON_PATH "$ENV{SPX_SDK_DIR}/venv/bin/python3" CACHE FILEPATH "Path to Python executable for SPX tools")
-        elseif(EXISTS "$ENV{SPX_SDK_DIR}/venv/bin/python")
-            set(SPX_PYTHON_PATH "$ENV{SPX_SDK_DIR}/venv/bin/python" CACHE FILEPATH "Path to Python executable for SPX tools")
+    if(DEFINED ENV{SPECTRANEXT_SDK_PATH})
+        # On Windows, use spx.bat which handles venv Python automatically
+        # On Unix, use spx.py with Python executable
+        if(WIN32)
+            set(SPX_SCRIPT "$ENV{SPECTRANEXT_SDK_PATH}/bin/spx.bat" CACHE FILEPATH "Path to spx.bat script")
+            # spx.bat handles Python, so we don't need SPX_PYTHON_PATH on Windows
+        else()
+            set(SPX_SCRIPT "$ENV{SPECTRANEXT_SDK_PATH}/bin/spx.py" CACHE FILEPATH "Path to spx.py script")
+            # Use venv Python from SDK (Unix paths)
+            if(EXISTS "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3")
+                set(SPX_PYTHON_PATH "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3" CACHE FILEPATH "Path to Python executable for SPX tools")
+            elseif(EXISTS "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python")
+                set(SPX_PYTHON_PATH "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python" CACHE FILEPATH "Path to Python executable for SPX tools")
+            endif()
         endif()
-    elseif(DEFINED ENV{SPECTRANEXT_SDK_PATH})
-        set(SPX_SCRIPT "$ENV{SPECTRANEXT_SDK_PATH}/bin/spx.py" CACHE FILEPATH "Path to spx.py script")
-        if(EXISTS "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3")
-            set(SPX_PYTHON_PATH "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3" CACHE FILEPATH "Path to Python executable for SPX tools")
-        elseif(EXISTS "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python")
-            set(SPX_PYTHON_PATH "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python" CACHE FILEPATH "Path to Python executable for SPX tools")
+    endif()
+    
+    # Fallback: try to find Python in PATH if venv not found (Unix only)
+    if(NOT WIN32 AND NOT DEFINED SPX_PYTHON_PATH)
+        find_program(SPX_PYTHON_PATH
+            NAMES python3 python
+            DOC "Python executable for SPX tools"
+        )
+        if(SPX_PYTHON_PATH)
+            set(SPX_PYTHON_PATH "${SPX_PYTHON_PATH}" CACHE FILEPATH "Path to Python executable for SPX tools" FORCE)
+        endif()
+    endif()
+endif()
+
+# Set up SPX_EXECUTABLE_COMMAND cache variable
+# On Windows: use spx.bat directly, on Unix: use Python + spx.py
+if(NOT DEFINED SPX_EXECUTABLE_COMMAND)
+    if(DEFINED SPX_SCRIPT)
+        if(WIN32)
+            set(SPX_EXECUTABLE_COMMAND ${SPX_SCRIPT} CACHE STRING "Command to execute SPX tools (spx.bat on Windows)")
+        else()
+            if(DEFINED SPX_PYTHON_PATH)
+                set(SPX_EXECUTABLE_COMMAND ${SPX_PYTHON_PATH} ${SPX_SCRIPT} CACHE STRING "Command to execute SPX tools (python spx.py on Unix)")
+            endif()
         endif()
     endif()
 endif()
@@ -80,12 +114,47 @@ function(spectranext_set_boot BOOT_BASIC)
     endif()
     
     # Use exported SPX variables
-    if(NOT DEFINED SPX_SCRIPT OR NOT DEFINED SPX_PYTHON_PATH)
-        message(WARNING "SPX_SCRIPT or SPX_PYTHON_PATH not found, boot upload target will not be created")
+    # Try to find them if not already set
+    if(NOT DEFINED SPX_SCRIPT)
+        if(DEFINED ENV{SPECTRANEXT_SDK_PATH})
+            set(SPX_SCRIPT "$ENV{SPECTRANEXT_SDK_PATH}/bin/spx.py" CACHE FILEPATH "Path to spx.py script")
+        endif()
+    endif()
+    
+    if(NOT DEFINED SPX_PYTHON_PATH)
+        if(DEFINED ENV{SPECTRANEXT_SDK_PATH})
+            if(WIN32)
+                if(EXISTS "$ENV{SPECTRANEXT_SDK_PATH}/venv/Scripts/python.exe")
+                    set(SPX_PYTHON_PATH "$ENV{SPECTRANEXT_SDK_PATH}/venv/Scripts/python.exe" CACHE FILEPATH "")
+                endif()
+            else()
+                if(EXISTS "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3")
+                    set(SPX_PYTHON_PATH "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3" CACHE FILEPATH "")
+                endif()
+            endif()
+        endif()
+        if(NOT SPX_PYTHON_PATH)
+            find_program(SPX_PYTHON_PATH NAMES python3.exe python.exe python3 python)
+        endif()
+    endif()
+    
+    if(NOT SPX_SCRIPT OR NOT EXISTS "${SPX_SCRIPT}")
+        # Silently skip - boot upload is optional
         return()
     endif()
     
-    set(PYTHON_EXECUTABLE ${SPX_PYTHON_PATH})
+    # Use cached SPX_EXECUTABLE_COMMAND if available, otherwise set it up
+    if(NOT DEFINED SPX_EXECUTABLE_COMMAND)
+        if(WIN32)
+            set(SPX_EXECUTABLE_COMMAND ${SPX_SCRIPT} CACHE STRING "Command to execute SPX tools (spx.bat on Windows)")
+        else()
+            if(NOT SPX_PYTHON_PATH)
+                # Silently skip - boot upload is optional
+                return()
+            endif()
+            set(SPX_EXECUTABLE_COMMAND ${SPX_PYTHON_PATH} ${SPX_SCRIPT} CACHE STRING "Command to execute SPX tools (python spx.py on Unix)")
+        endif()
+    endif()
     
     # Create boot.bas file in binary directory
     set(BOOT_BAS_FILE "${CMAKE_BINARY_DIR}/boot.bas")
@@ -108,7 +177,7 @@ function(spectranext_set_boot BOOT_BASIC)
     set(REMOTE_BOOT_PATH "boot.zx")
     add_custom_target(upload_boot
         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target boot_file
-        COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} put ${BOOT_ZX_FILE} ${REMOTE_BOOT_PATH}
+        COMMAND ${SPX_EXECUTABLE_COMMAND} put ${BOOT_ZX_FILE} ${REMOTE_BOOT_PATH}
         DEPENDS boot_file
         COMMENT "Building and uploading boot.zx"
     )
@@ -122,13 +191,44 @@ endfunction()
 # Also creates convenience targets: program, upload, autoboot
 # Usage: spectranext_add_extra_outputs(my_project)
 function(spectranext_add_extra_outputs PROJECT_NAME)
-    # Use exported SPX variables
-    if(NOT DEFINED SPX_SCRIPT OR NOT DEFINED SPX_PYTHON_PATH)
-        message(WARNING "SPX_SCRIPT or SPX_PYTHON_PATH not found, cannot create upload targets")
+    # Use exported SPX variables - try to find them if not set
+    if(NOT DEFINED SPX_SCRIPT)
+        if(DEFINED ENV{SPECTRANEXT_SDK_PATH})
+            if(WIN32)
+                set(SPX_SCRIPT "$ENV{SPECTRANEXT_SDK_PATH}/bin/spx.bat" CACHE FILEPATH "")
+            else()
+                set(SPX_SCRIPT "$ENV{SPECTRANEXT_SDK_PATH}/bin/spx.py" CACHE FILEPATH "")
+            endif()
+        endif()
+    endif()
+    
+    if(NOT SPX_SCRIPT OR NOT EXISTS "${SPX_SCRIPT}")
+        # Silently skip - upload targets are optional
         return()
     endif()
     
-    set(PYTHON_EXECUTABLE ${SPX_PYTHON_PATH})
+    # Use cached SPX_EXECUTABLE_COMMAND if available, otherwise set it up
+    if(NOT DEFINED SPX_EXECUTABLE_COMMAND)
+        if(WIN32)
+            set(SPX_EXECUTABLE_COMMAND ${SPX_SCRIPT} CACHE STRING "Command to execute SPX tools (spx.bat on Windows)")
+        else()
+            if(NOT DEFINED SPX_PYTHON_PATH)
+                if(DEFINED ENV{SPECTRANEXT_SDK_PATH})
+                    if(EXISTS "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3")
+                        set(SPX_PYTHON_PATH "$ENV{SPECTRANEXT_SDK_PATH}/venv/bin/python3" CACHE FILEPATH "")
+                    endif()
+                endif()
+                if(NOT SPX_PYTHON_PATH)
+                    find_program(SPX_PYTHON_PATH NAMES python3 python)
+                endif()
+            endif()
+            if(NOT SPX_PYTHON_PATH)
+                # Silently skip - upload targets are optional
+                return()
+            endif()
+            set(SPX_EXECUTABLE_COMMAND ${SPX_PYTHON_PATH} ${SPX_SCRIPT} CACHE STRING "Command to execute SPX tools (python spx.py on Unix)")
+        endif()
+    endif()
     
     # Determine binary paths from target properties (.bin and .tap)
     if(TARGET ${PROJECT_NAME})
@@ -163,37 +263,37 @@ function(spectranext_add_extra_outputs PROJECT_NAME)
 
     if(TARGET upload_boot)
         add_custom_target(${PROJECT_NAME}_upload_bin
-            COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} put ${BIN_PATH} ${REMOTE_BIN_PATH}
+            COMMAND ${SPX_EXECUTABLE_COMMAND} put ${BIN_PATH} ${REMOTE_BIN_PATH}
             COMMENT "Building and uploading ${PROJECT_NAME}.bin to ${REMOTE_BIN_PATH}"
             DEPENDS ${PROJECT_NAME} upload_boot
         )
 
         add_custom_target(${PROJECT_NAME}_upload_tap
-            COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} put ${TAP_PATH} ${REMOTE_TAP_PATH}
+            COMMAND ${SPX_EXECUTABLE_COMMAND} put ${TAP_PATH} ${REMOTE_TAP_PATH}
             COMMENT "Building and uploading ${PROJECT_NAME}.tap to ${REMOTE_TAP_PATH}"
             DEPENDS ${PROJECT_NAME} upload_boot
         )
     else()
         add_custom_target(${PROJECT_NAME}_upload_bin
-            COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} put ${BIN_PATH} ${REMOTE_BIN_PATH}
+            COMMAND ${SPX_EXECUTABLE_COMMAND} put ${BIN_PATH} ${REMOTE_BIN_PATH}
             COMMENT "Building and uploading ${PROJECT_NAME}.bin to ${REMOTE_BIN_PATH}"
             DEPENDS ${PROJECT_NAME}
         )
         add_custom_target(${PROJECT_NAME}_upload_tap
-            COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} put ${TAP_PATH} ${REMOTE_TAP_PATH}
+            COMMAND ${SPX_EXECUTABLE_COMMAND} put ${TAP_PATH} ${REMOTE_TAP_PATH}
             COMMENT "Building and uploading ${PROJECT_NAME}.tap to ${REMOTE_TAP_PATH}"
             DEPENDS ${PROJECT_NAME}
         )
     endif()
 
     add_custom_target(${PROJECT_NAME}_bin_autoboot
-        COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} autoboot
+        COMMAND ${SPX_EXECUTABLE_COMMAND} autoboot
         COMMENT "Rebooting into .bin (boot.zx)"
         DEPENDS ${PROJECT_NAME}_upload_bin
     )
 
     add_custom_target(${PROJECT_NAME}_tap_autoboot
-        COMMAND ${PYTHON_EXECUTABLE} ${SPX_SCRIPT} autoboot
+        COMMAND ${SPX_EXECUTABLE_COMMAND} autoboot
         COMMENT "Rebooting into .tap (boot.zx)"
         DEPENDS ${PROJECT_NAME}_upload_tap
     )

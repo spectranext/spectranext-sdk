@@ -4,6 +4,8 @@ SDK for developing applications for the [Spectranext cartridge](https://spectran
 
 ## Installation
 
+### macOS / Linux
+
 Run the installation script to set up z88dk and Python dependencies:
 
 ```bash
@@ -12,12 +14,48 @@ cd spectranext-sdk
 ./install.sh
 ```
 
-This will:
+### Windows
+
+**Option 1: Double-click installation (easiest)**
+
+Simply double-click `install.bat` after cloning the repository:
+
+```batch
+git clone https://github.com/spectranext/spectranext-sdk
+cd spectranext-sdk
+# Double-click install.bat or run it from command prompt
+install.bat
+```
+
+**Option 2: PowerShell script**
+
+Run the PowerShell installation script directly:
+
+```powershell
+git clone https://github.com/spectranext/spectranext-sdk
+cd spectranext-sdk
+.\install.ps1
+```
+
+**Prerequisites for Windows:**
+- Python 3.7 or later (download from https://www.python.org/downloads/)
+  - Make sure to check "Add Python to PATH" during installation
+- Git for Windows (download from https://git-scm.com/download/win)
+- PowerShell 5.1 or later (included with Windows 10/11)
+
+**Optional (for building zmakebas):**
+- A C compiler (MinGW-w64, Visual Studio Build Tools, or MSYS2)
+- Make utility (available in MSYS2 or via Chocolatey: `choco install make`)
+
+The installation script will:
 - Download and install z88dk toolchain
 - Create a Python virtual environment
 - Install required Python dependencies
+- Build and install zmakebas (if a C compiler is available)
 
 ## Setup
+
+### macOS / Linux
 
 Source the SDK environment in your shell:
 
@@ -29,6 +67,26 @@ Or add it to your shell configuration file (`~/.zshrc` or `~/.bashrc`):
 
 ```bash
 source /path/to/spectranext-sdk/source.sh
+```
+
+### Windows
+
+Source the SDK environment in PowerShell:
+
+```powershell
+. .\spectranext-sdk\source.ps1
+```
+
+Or add it to your PowerShell profile for automatic activation:
+
+```powershell
+Add-Content $PROFILE ". `"$PWD\spectranext-sdk\source.ps1`""
+```
+
+To find your PowerShell profile location:
+
+```powershell
+$PROFILE
 ```
 
 ## Setting Up a CMake Project
@@ -146,7 +204,6 @@ The SDK sets the following environment variables:
 - `SPECTRANEXT_TOOLCHAIN` - Path to the CMake toolchain file
 - `SPECTRANEXT_INCLUDE_DIR` - Path to SDK include directory
 - `ZCCTARGET` - z88dk target (default: `zx`)
-- `SPX_SDK_DIR` - SDK directory for SPX tools
 - `ZCCCFG` - z88dk configuration path
 - `PATH` - Includes `z88dk/bin`
 
@@ -167,7 +224,7 @@ You can read on xfs tools a little bit more here: https://docs.spectranext.net/d
 - `spx-rmdir <path>` - Remove directory
 - `spx-reboot` - Trigger ZX Spectrum reboot
 - `spx-autoboot` - Configure autoboot from xfs://ram/ and reboot
-- `spx-terminal` - Launch minicom terminal on console port
+- `spx-terminal` - Show terminal connection info (macOS/Linux: launches minicom; Windows: shows connection settings)
 
 Run `spx-help` for a list of available commands.
 

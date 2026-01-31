@@ -11,15 +11,15 @@ _get_python() {
     local python_cmd=""
     
     # First, try venv Python from SDK directory
-    if [ -n "$SPX_SDK_DIR" ] && [ -d "$SPX_SDK_DIR/venv" ]; then
-        if [ -x "$SPX_SDK_DIR/venv/bin/python3" ]; then
-            python_cmd="$SPX_SDK_DIR/venv/bin/python3"
+    if [ -n "$SPECTRANEXT_SDK_PATH" ] && [ -d "$SPECTRANEXT_SDK_PATH/venv" ]; then
+        if [ -x "$SPECTRANEXT_SDK_PATH/venv/bin/python3" ]; then
+            python_cmd="$SPECTRANEXT_SDK_PATH/venv/bin/python3"
             if "$python_cmd" --version >/dev/null 2>&1; then
                 echo "$python_cmd"
                 return 0
             fi
-        elif [ -x "$SPX_SDK_DIR/venv/bin/python" ]; then
-            python_cmd="$SPX_SDK_DIR/venv/bin/python"
+        elif [ -x "$SPECTRANEXT_SDK_PATH/venv/bin/python" ]; then
+            python_cmd="$SPECTRANEXT_SDK_PATH/venv/bin/python"
             if "$python_cmd" --version >/dev/null 2>&1; then
                 echo "$python_cmd"
                 return 0

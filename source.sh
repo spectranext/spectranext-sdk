@@ -48,9 +48,6 @@ fi
 # Export SDK include directory
 export SPECTRANEXT_INCLUDE_DIR="$SCRIPT_DIR/include"
 
-# Export SDK directory for use by spx.sh
-export SPX_SDK_DIR="$SCRIPT_DIR"
-
 # Export CMake SDK path
 export SPECTRANEXT_SDK_PATH="$SCRIPT_DIR"
 

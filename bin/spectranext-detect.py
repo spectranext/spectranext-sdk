@@ -114,7 +114,10 @@ def find_spectranext_devices():
         if 'gdb' not in result and len(spectranext_ports) > 2:
             result['gdb'] = spectranext_ports[2].device
     else:
-        # Mac/Linux: use order
+        # Mac/Linux: use order - sort by device path to ensure consistent ordering
+        # First port = CLI, Second port = USBFS, Third port = GDB
+        spectranext_ports.sort(key=lambda p: p.device)
+        
         if len(spectranext_ports) > 0:
             result['cli'] = spectranext_ports[0].device
         if len(spectranext_ports) > 1:

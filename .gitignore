@@ -4,3 +4,7 @@ z88dk-src
 zmakebas
 man/
 bin/
+cmake-build-debug
+.idea
+.ticks_history.txt
+build

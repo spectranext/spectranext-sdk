@@ -43,15 +43,10 @@ cd spectranext-sdk
 - Git for Windows (download from https://git-scm.com/download/win)
 - PowerShell 5.1 or later (included with Windows 10/11)
 
-**Optional (for building zmakebas):**
-- A C compiler (MinGW-w64, Visual Studio Build Tools, or MSYS2)
-- Make utility (available in MSYS2 or via Chocolatey: `choco install make`)
-
 The installation script will:
 - Download and install z88dk toolchain
 - Create a Python virtual environment
 - Install required Python dependencies
-- Build and install zmakebas (if a C compiler is available)
 
 ## Setup
 
@@ -71,22 +66,10 @@ source /path/to/spectranext-sdk/source.sh
 
 ### Windows
 
-Source the SDK environment in PowerShell:
+Source the SDK environment in PowerShell (Or your relevant IDE):
 
 ```powershell
 . .\spectranext-sdk\source.ps1
-```
-
-Or add it to your PowerShell profile for automatic activation:
-
-```powershell
-Add-Content $PROFILE ". `"$PWD\spectranext-sdk\source.ps1`""
-```
-
-To find your PowerShell profile location:
-
-```powershell
-$PROFILE
 ```
 
 ## Setting Up a CMake Project

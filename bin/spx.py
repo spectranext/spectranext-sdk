@@ -113,7 +113,7 @@ class SPXConnection:
         except:
             pass
         
-        self.ser = serial.Serial(port, 115200, timeout=1)
+        self.ser = serial.Serial(port, 115200, timeout=1, write_timeout=1)
         self.ser.reset_input_buffer()
         self.ser.reset_output_buffer()
         
@@ -185,6 +185,7 @@ class SPXConnection:
             "jsonrpc": "2.0",
             "method": method,
             "params": params,
+            "meta": "x" * 20,
             "id": request_id
         }
         
@@ -192,10 +193,11 @@ class SPXConnection:
         self.ser.write(request_json.encode('utf-8'))
         self.ser.flush()
         
-        # Read response line
-        response_line = self.ser.readline().decode('utf-8', errors='ignore').strip()
-        if not response_line:
+        # Read response line until newline
+        response_bytes = self.ser.read_until(b'\n')
+        if not response_bytes:
             raise USBFSIOError("No response received")
+        response_line = response_bytes.decode('utf-8', errors='ignore').strip()
         
         try:
             response = json.loads(response_line)

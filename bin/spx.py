@@ -134,7 +134,9 @@ class SPXConnection:
             # Windows: create a lock file and lock it
             import tempfile
             # Create lock file path based on port name (e.g., COM28 -> spx_COM28.lock)
-            lock_name = f"spx_{port.replace(':', '_').replace('\\', '_')}.lock"
+            # Sanitize port name for use in filename
+            sanitized_port = port.replace(':', '_').replace('\\', '_').replace('/', '_')
+            lock_name = f"spx_{sanitized_port}.lock"
             lock_dir = tempfile.gettempdir()
             self._lock_file = os.path.join(lock_dir, lock_name)
             

@@ -54,6 +54,8 @@ The installation script will:
 
 ### macOS / Linux
 
+**Option 1: Source in your shell**
+
 Source the SDK environment in your shell:
 
 ```bash
@@ -66,13 +68,33 @@ Or add it to your shell configuration file (`~/.zshrc` or `~/.bashrc`):
 source /path/to/spectranext-sdk/source.sh
 ```
 
+**Option 2: Use as environment file in IDE**
+
+You can also use `source.sh` as an environment file in your IDE. For example, in CLion:
+
+1. Go to **File** > **Settings** (or **CLion** > **Preferences** on macOS)
+2. Navigate to **Build, Execution, Deployment** > **Toolchains**
+3. Select your toolchain (e.g., "Default")
+4. Click the **Environment** field
+5. Click the folder icon and select `source.sh` from your SDK directory
+6. CLion will automatically load the environment variables from `source.sh`
+
+This ensures that CMake builds use the correct SDK environment without needing to source the file manually.
+
 ### Windows
 
-Source the SDK environment in PowerShell (Or your relevant IDE):
+**Use as environment file in IDE**
 
-```powershell
-. .\spectranext-sdk\source.ps1
-```
+You can also use `source.ps1` as an environment file in your IDE. For example, in CLion:
+
+1. Go to **File** > **Settings**
+2. Navigate to **Build, Execution, Deployment** > **Toolchains**
+3. Select your toolchain (e.g., "Default")
+4. Click the **Environment** field
+5. Click the folder icon and select `source.ps1` from your SDK directory
+6. CLion will automatically load the environment variables from `source.ps1`
+
+This ensures that CMake builds use the correct SDK environment without needing to source the file manually.
 
 ## Setting Up a CMake Project
 

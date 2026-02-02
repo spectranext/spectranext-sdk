@@ -13,9 +13,22 @@ import binascii
 import threading
 import queue
 import signal
-import fcntl
 import errno
 from typing import Optional, Tuple, List
+
+# fcntl is Unix-only, not available on Windows
+try:
+    import fcntl
+    HAS_FCNTL = True
+except ImportError:
+    HAS_FCNTL = False
+
+# msvcrt provides file locking on Windows
+try:
+    import msvcrt
+    HAS_MSVCRT = True
+except ImportError:
+    HAS_MSVCRT = False
 
 # Import device detection from spectranext-detect.py
 import importlib.util
@@ -91,40 +104,106 @@ class SPXConnection:
         self._lock_fd = None
         
         # Acquire exclusive lock on the serial port device file
-        try:
-            # Open lock file (the device file itself)
-            self._lock_fd = os.open(port, os.O_RDWR)
-            # Try to acquire exclusive lock (non-blocking first)
+        if HAS_FCNTL:
+            # Unix: lock the device file directly
             try:
-                fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except IOError as e:
-                if e.errno == errno.EWOULDBLOCK:
-                    # Lock is held by another process - wait for it
-                    if verbose:
-                        print(f"[LOCK] Waiting for device lock on {port}...", file=sys.stderr)
-                    # Block until lock is available
-                    fcntl.flock(self._lock_fd, fcntl.LOCK_EX)
-                    if verbose:
-                        print(f"[LOCK] Acquired device lock on {port}", file=sys.stderr)
-                else:
+                # Open lock file (the device file itself)
+                self._lock_fd = os.open(port, os.O_RDWR)
+                # Try to acquire exclusive lock (non-blocking first)
+                try:
+                    fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except IOError as e:
+                    if e.errno == errno.EWOULDBLOCK:
+                        # Lock is held by another process - wait for it
+                        if verbose:
+                            print(f"[LOCK] Waiting for device lock on {port}...", file=sys.stderr)
+                        # Block until lock is available
+                        fcntl.flock(self._lock_fd, fcntl.LOCK_EX)
+                        if verbose:
+                            print(f"[LOCK] Acquired device lock on {port}", file=sys.stderr)
+                    else:
+                        os.close(self._lock_fd)
+                        self._lock_fd = None
+                        raise RSPException(f"Failed to acquire lock on {port}: {e}")
+            except OSError as e:
+                if self._lock_fd is not None:
                     os.close(self._lock_fd)
                     self._lock_fd = None
-                    raise RSPException(f"Failed to acquire lock on {port}: {e}")
-        except OSError as e:
-            if self._lock_fd is not None:
-                os.close(self._lock_fd)
-                self._lock_fd = None
-            raise RSPException(f"Failed to open device file {port} for locking: {e}")
+                raise RSPException(f"Failed to open device file {port} for locking: {e}")
+        elif HAS_MSVCRT:
+            # Windows: create a lock file and lock it
+            import tempfile
+            # Create lock file path based on port name (e.g., COM28 -> spx_COM28.lock)
+            lock_name = f"spx_{port.replace(':', '_').replace('\\', '_')}.lock"
+            lock_dir = tempfile.gettempdir()
+            self._lock_file = os.path.join(lock_dir, lock_name)
+            
+            try:
+                # Try to acquire lock with retries
+                max_retries = 100  # Wait up to 10 seconds (100 * 0.1s)
+                retry_count = 0
+                lock_acquired = False
+                
+                while retry_count < max_retries and not lock_acquired:
+                    try:
+                        # Open or create lock file
+                        self._lock_fd = os.open(self._lock_file, os.O_CREAT | os.O_RDWR)
+                        # Try to lock byte 0 (non-blocking)
+                        try:
+                            msvcrt.locking(self._lock_fd, msvcrt.LK_NBLCK, 1)
+                            lock_acquired = True
+                            if verbose:
+                                print(f"[LOCK] Acquired device lock on {port}", file=sys.stderr)
+                        except OSError as lock_err:
+                            # Lock is held by another process
+                            os.close(self._lock_fd)
+                            self._lock_fd = None
+                            if verbose and retry_count == 0:
+                                print(f"[LOCK] Waiting for device lock on {port}...", file=sys.stderr)
+                            time.sleep(0.1)
+                            retry_count += 1
+                    except OSError as e:
+                        if self._lock_fd is not None:
+                            try:
+                                os.close(self._lock_fd)
+                            except:
+                                pass
+                            self._lock_fd = None
+                        if verbose and retry_count == 0:
+                            print(f"[LOCK] Waiting for device lock on {port}...", file=sys.stderr)
+                        time.sleep(0.1)
+                        retry_count += 1
+                
+                if not lock_acquired:
+                    raise RSPException(f"Failed to acquire lock on {port}: timeout waiting for lock")
+            except OSError as e:
+                if self._lock_fd is not None:
+                    try:
+                        msvcrt.locking(self._lock_fd, msvcrt.LK_UNLCK, 1)
+                        os.close(self._lock_fd)
+                    except:
+                        pass
+                    self._lock_fd = None
+                raise RSPException(f"Failed to create lock file for {port}: {e}")
         
         # Now open the serial port (pyserial will open it again, but that's fine)
         try:
             self.ser = serial.Serial(port, 115200, timeout=1, write_timeout=1)
         except serial.SerialException as e:
             # Release lock if serial open fails
-            if self._lock_fd is not None:
+            if HAS_FCNTL and self._lock_fd is not None:
                 fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
                 os.close(self._lock_fd)
                 self._lock_fd = None
+            elif HAS_MSVCRT and self._lock_fd is not None:
+                msvcrt.locking(self._lock_fd, msvcrt.LK_UNLCK, 1)
+                os.close(self._lock_fd)
+                try:
+                    os.unlink(self._lock_file)
+                except:
+                    pass
+                self._lock_fd = None
+                self._lock_file = None
             raise RSPException(f"Failed to open serial port {port}: {e}")
         
         # Give device time to stabilize
@@ -980,7 +1059,7 @@ class SPXConnection:
             self.ser.close()
         
         # Release lock
-        if self._lock_fd is not None:
+        if HAS_FCNTL and self._lock_fd is not None:
             try:
                 fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
             except:
@@ -990,6 +1069,22 @@ class SPXConnection:
             except:
                 pass  # Ignore errors when closing fd
             self._lock_fd = None
+        elif HAS_MSVCRT and self._lock_fd is not None:
+            try:
+                msvcrt.locking(self._lock_fd, msvcrt.LK_UNLCK, 1)
+            except:
+                pass  # Ignore errors when releasing lock
+            try:
+                os.close(self._lock_fd)
+            except:
+                pass  # Ignore errors when closing fd
+            try:
+                if self._lock_file:
+                    os.unlink(self._lock_file)
+            except:
+                pass  # Ignore errors when removing lock file
+            self._lock_fd = None
+            self._lock_file = None
 
 
 # Command-line interface functions

@@ -75,7 +75,7 @@ _spx_get_python() {
     return 1
 }
 
-# Find port by interface number (0 = console, 1 = USBFS)
+# Find port using spectranext-detect.py (now single unified interface)
 _spx_find_port_by_interface() {
     local interface=$1
     local python_cmd
@@ -84,18 +84,8 @@ _spx_find_port_by_interface() {
         return 1
     fi
     
-    local port=$("$python_cmd" -c "
-import serial.tools.list_ports
-ports = [p.device for p in serial.tools.list_ports.comports() 
-         if p.vid == 0x1337 and p.pid == 0x0001]
-ports.sort()
-if len(ports) > $interface:
-    print(ports[$interface])
-elif len(ports) == 1 and $interface == 0:
-    print(ports[0])
-else:
-    print('')
-" 2>/dev/null)
+    # Use spectranext-detect.py for consistency
+    local port=$("$python_cmd" "$_SPX_SCRIPT_DIR/spectranext-detect.py" --cli 2>/dev/null)
     
     if [ -n "$port" ]; then
         echo "$port"
@@ -105,13 +95,13 @@ else:
 }
 
 _spx_find_port() {
-    # Find USBFS port (interface 1)
-    _SPX_PORT=$(_spx_find_port_by_interface 1)
+    # Find unified CDC port (interface 0) - now the only interface
+    _SPX_PORT=$(_spx_find_port_by_interface 0)
     [ -n "$_SPX_PORT" ]
 }
 
 _spx_find_console_port() {
-    # Find console port (interface 0)
+    # Find unified CDC port (interface 0) - same as main port now
     _spx_find_port_by_interface 0
 }
 
@@ -270,6 +260,39 @@ spx-autoboot() {
     "$python_cmd" "$_SPX_SCRIPT_DIR/spx.py" --port "$port" autoboot
 }
 
+# Execute CLI command on device
+spx-exec() {
+    local port=$(_spx_get_port)
+    [ $? -ne 0 ] && return 1
+    
+    local python_cmd=$(_spx_get_python)
+    [ $? -ne 0 ] && return 1
+    
+    if [ $# -lt 1 ]; then
+        echo "Usage: spx-exec <command> [--follow [SECONDS]]" >&2
+        echo "  Execute a CLI command on the device" >&2
+        echo "  --follow: Stream output continuously (optional SECONDS to limit duration)" >&2
+        return 1
+    fi
+    
+    local cmd="$1"
+    shift
+    
+    # Parse optional --follow flag
+    local follow_flag=""
+    if [ "$1" = "--follow" ] || [ "$1" = "-f" ]; then
+        if [ -n "$2" ] && [[ "$2" =~ ^[0-9]+$ ]]; then
+            follow_flag="--follow $2"
+            shift 2
+        else
+            follow_flag="--follow"
+            shift
+        fi
+    fi
+    
+    "$python_cmd" "$_SPX_SCRIPT_DIR/spx.py" --port "$port" exec "$cmd" $follow_flag
+}
+
 # Launch minicom terminal on console port
 spx-terminal() {
     local console_port=$(_spx_find_console_port)
@@ -303,6 +326,7 @@ SPX Commands:
   spx-rmdir <path>       Remove directory
   spx-reboot             Trigger ZX Spectrum reboot
   spx-autoboot           Configure autoboot from xfs://ram/ and reboot ZX Spectrum
+  spx-exec <command> [--follow [SECONDS]]  Execute CLI command on device
   spx-terminal           Launch minicom terminal on console port
 EOF
 }

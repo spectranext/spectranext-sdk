@@ -1196,22 +1196,36 @@ class SPXConnection:
         if self._reader_thread is not None:
             self._reader_stop.set()
             # Reduce timeout so reader thread wakes up faster
+            old_timeout = None
             if self.is_tcp:
                 if self.sock:
-                    old_timeout = self.sock.gettimeout()
-                    self.sock.settimeout(0.01)  # Very short timeout to wake up quickly
+                    try:
+                        old_timeout = self.sock.gettimeout()
+                        self.sock.settimeout(0.01)  # Very short timeout to wake up quickly
+                    except:
+                        pass  # Ignore errors when setting timeout
             else:
                 if self.ser and self.ser.is_open:
-                    old_timeout = self.ser.timeout
-                    self.ser.timeout = 0.01  # Very short timeout to wake up quickly
+                    try:
+                        old_timeout = self.ser.timeout
+                        self.ser.timeout = 0.01  # Very short timeout to wake up quickly
+                    except:
+                        pass  # Ignore errors when setting timeout (port may be closing)
             self._reader_thread.join(timeout=0.1)  # Reduced join timeout
             # Restore timeout if connection is still open
-            if self.is_tcp:
-                if self.sock:
-                    self.sock.settimeout(old_timeout)
-            else:
-                if self.ser and self.ser.is_open:
-                    self.ser.timeout = old_timeout
+            if old_timeout is not None:
+                if self.is_tcp:
+                    if self.sock:
+                        try:
+                            self.sock.settimeout(old_timeout)
+                        except:
+                            pass
+                else:
+                    if self.ser and self.ser.is_open:
+                        try:
+                            self.ser.timeout = old_timeout
+                        except:
+                            pass  # Ignore errors when restoring timeout
             self._reader_thread = None
         
         # Close connection

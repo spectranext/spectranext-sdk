@@ -7,6 +7,7 @@ Provides binutils-style commands for browsing and managing RAMFS over GDB Remote
 import sys
 import os
 import serial
+import socket
 import argparse
 import time
 import binascii
@@ -83,59 +84,165 @@ class SPXConnection:
         Initialize connection to SPX device.
         
         Args:
-            port: Serial port name (e.g., '/dev/ttyACM0'). If None, auto-detect.
+            port: Serial port name (e.g., '/dev/ttyACM0') or TCP address (e.g., 'localhost:1337').
+                  If None, auto-detect USB first, then fall back to localhost:1337.
             show_progress: Whether to show progress indicators for transfers (default: True)
             verbose: Whether to log all data sent and received (default: False)
         """
-        if not port:
-            # Try environment variable first
-            port = os.environ.get('SPECTRANEXT_CLI')
-            if not port:
-                # Auto-detect
-                detected_port, _ = find_spectranext_device()
-                if detected_port:
-                    port = detected_port
-        
-        if not port:
-            raise RSPException("Could not find SPX device. Make sure device is connected and try running 'spectranext-detect.py' to verify detection.")
-        
-        self.port = port
+        self.is_tcp = False
+        self.ser = None
+        self.sock = None
+        self.port = None  # Initialize to None, will be set below
         self._lock_file = None
         self._lock_fd = None
         
+        # Set flags before any operations that might use them
+        self.show_progress = show_progress and sys.stdout.isatty()
+        self.verbose = verbose
+        
+        # Determine connection type
+        if port:
+            # Check if port looks like TCP address (host:port or just port number)
+            if ':' in port or port.isdigit():
+                self.is_tcp = True
+                self.port = port
+            else:
+                self.is_tcp = False
+                self.port = port
+        else:
+            # Try environment variable first
+            env_port = os.environ.get('SPECTRANEXT_CLI')
+            if env_port:
+                if ':' in env_port or env_port.isdigit():
+                    self.is_tcp = True
+                    self.port = env_port
+                else:
+                    self.is_tcp = False
+                    self.port = env_port
+            else:
+                # Auto-detect: try USB first
+                try:
+                    detected_port, _ = find_spectranext_device()
+                    if detected_port:
+                        self.is_tcp = False
+                        self.port = detected_port
+                    else:
+                        # Fall back to TCP
+                        self.is_tcp = True
+                        self.port = "localhost:1337"
+                        if self.verbose:
+                            print("[INFO] No USB device found, falling back to TCP (localhost:1337)", file=sys.stderr)
+                except Exception as e:
+                    # USB detection failed, fall back to TCP
+                    if self.verbose:
+                        print(f"[INFO] USB detection failed ({e}), falling back to TCP (localhost:1337)", file=sys.stderr)
+                    self.is_tcp = True
+                    self.port = "localhost:1337"
+        
+        # Only raise exception if port is still not set (shouldn't happen after auto-detect fallback)
+        if not self.port:
+            raise RSPException("Could not find SPX device. Make sure device is connected (USB) or GDB server is running (TCP).")
+        
+        if self.verbose:
+            connection_type = "TCP" if self.is_tcp else "USB"
+            print(f"[INFO] Connecting via {connection_type} to {self.port}", file=sys.stderr)
+        
+        # Connect based on type
+        if self.is_tcp:
+            self._connect_tcp()
+        else:
+            self._connect_usb()
+        
+        # Default packet size (will be updated from qSupported response)
+        self.max_packet_size = 1024
+        
+        # Queue for storing response packets (non-O packets) and ACK/NAK
+        self._response_queue = queue.Queue()
+        
+        # O-packet callback for streaming output
+        self._o_packet_callback = None
+        
+        # Thread control
+        self._reader_thread = None
+        self._reader_stop = threading.Event()
+        
+        # Drain any leftover input (console prompts, etc.)
+        self._drain_input()
+        
+        # Start background reader thread
+        self._start_reader_thread()
+        
+        # Verify vSpectranext support and parse packet size
+        self._verify_support()
+    
+    def _connect_tcp(self):
+        """Connect via TCP socket"""
+        # Parse host:port
+        if ':' in self.port:
+            host, port_str = self.port.rsplit(':', 1)
+            try:
+                port = int(port_str)
+            except ValueError:
+                raise RSPException(f"Invalid TCP port: {port_str}")
+        else:
+            # Just port number
+            try:
+                port = int(self.port)
+                host = 'localhost'
+            except ValueError:
+                raise RSPException(f"Invalid TCP address: {self.port}")
+        
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.settimeout(1)  # 1 second timeout for connect
+            self.sock.connect((host, port))
+            self.sock.settimeout(1)  # 1 second timeout for read/write
+            if self.verbose:
+                print(f"[TCP] Connected to {host}:{port}", file=sys.stderr)
+        except (socket.error, OSError) as e:
+            error_msg = str(e)
+            if "Connection refused" in error_msg or "errno 61" in error_msg:
+                raise RSPException(f"Failed to connect to {host}:{port}: Connection refused. Make sure GDB server is running on port {port}.")
+            elif "timed out" in error_msg.lower() or "errno 60" in error_msg:
+                raise RSPException(f"Failed to connect to {host}:{port}: Connection timed out. Make sure GDB server is running on port {port}.")
+            else:
+                raise RSPException(f"Failed to connect to {host}:{port}: {e}")
+    
+    def _connect_usb(self):
+        """Connect via USB serial"""
         # Acquire exclusive lock on the serial port device file
         if HAS_FCNTL:
             # Unix: lock the device file directly
             try:
                 # Open lock file (the device file itself)
-                self._lock_fd = os.open(port, os.O_RDWR)
+                self._lock_fd = os.open(self.port, os.O_RDWR)
                 # Try to acquire exclusive lock (non-blocking first)
                 try:
                     fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except IOError as e:
                     if e.errno == errno.EWOULDBLOCK:
                         # Lock is held by another process - wait for it
-                        if verbose:
-                            print(f"[LOCK] Waiting for device lock on {port}...", file=sys.stderr)
+                        if self.verbose:
+                            print(f"[LOCK] Waiting for device lock on {self.port}...", file=sys.stderr)
                         # Block until lock is available
                         fcntl.flock(self._lock_fd, fcntl.LOCK_EX)
-                        if verbose:
-                            print(f"[LOCK] Acquired device lock on {port}", file=sys.stderr)
+                        if self.verbose:
+                            print(f"[LOCK] Acquired device lock on {self.port}", file=sys.stderr)
                     else:
                         os.close(self._lock_fd)
                         self._lock_fd = None
-                        raise RSPException(f"Failed to acquire lock on {port}: {e}")
+                        raise RSPException(f"Failed to acquire lock on {self.port}: {e}")
             except OSError as e:
                 if self._lock_fd is not None:
                     os.close(self._lock_fd)
                     self._lock_fd = None
-                raise RSPException(f"Failed to open device file {port} for locking: {e}")
+                raise RSPException(f"Failed to open device file {self.port} for locking: {e}")
         elif HAS_MSVCRT:
             # Windows: create a lock file and lock it
             import tempfile
             # Create lock file path based on port name (e.g., COM28 -> spx_COM28.lock)
             # Sanitize port name for use in filename
-            sanitized_port = port.replace(':', '_').replace('\\', '_').replace('/', '_')
+            sanitized_port = self.port.replace(':', '_').replace('\\', '_').replace('/', '_')
             lock_name = f"spx_{sanitized_port}.lock"
             lock_dir = tempfile.gettempdir()
             self._lock_file = os.path.join(lock_dir, lock_name)
@@ -154,14 +261,14 @@ class SPXConnection:
                         try:
                             msvcrt.locking(self._lock_fd, msvcrt.LK_NBLCK, 1)
                             lock_acquired = True
-                            if verbose:
-                                print(f"[LOCK] Acquired device lock on {port}", file=sys.stderr)
+                            if self.verbose:
+                                print(f"[LOCK] Acquired device lock on {self.port}", file=sys.stderr)
                         except OSError as lock_err:
                             # Lock is held by another process
                             os.close(self._lock_fd)
                             self._lock_fd = None
-                            if verbose and retry_count == 0:
-                                print(f"[LOCK] Waiting for device lock on {port}...", file=sys.stderr)
+                            if self.verbose and retry_count == 0:
+                                print(f"[LOCK] Waiting for device lock on {self.port}...", file=sys.stderr)
                             time.sleep(0.1)
                             retry_count += 1
                     except OSError as e:
@@ -171,13 +278,13 @@ class SPXConnection:
                             except:
                                 pass
                             self._lock_fd = None
-                        if verbose and retry_count == 0:
-                            print(f"[LOCK] Waiting for device lock on {port}...", file=sys.stderr)
+                        if self.verbose and retry_count == 0:
+                            print(f"[LOCK] Waiting for device lock on {self.port}...", file=sys.stderr)
                         time.sleep(0.1)
                         retry_count += 1
                 
                 if not lock_acquired:
-                    raise RSPException(f"Failed to acquire lock on {port}: timeout waiting for lock")
+                    raise RSPException(f"Failed to acquire lock on {self.port}: timeout waiting for lock")
             except OSError as e:
                 if self._lock_fd is not None:
                     try:
@@ -186,11 +293,11 @@ class SPXConnection:
                     except:
                         pass
                     self._lock_fd = None
-                raise RSPException(f"Failed to create lock file for {port}: {e}")
+                raise RSPException(f"Failed to create lock file for {self.port}: {e}")
         
         # Now open the serial port (pyserial will open it again, but that's fine)
         try:
-            self.ser = serial.Serial(port, 115200, timeout=1, write_timeout=1)
+            self.ser = serial.Serial(self.port, 115200, timeout=1, write_timeout=1)
         except serial.SerialException as e:
             # Release lock if serial open fails
             if HAS_FCNTL and self._lock_fd is not None:
@@ -206,52 +313,73 @@ class SPXConnection:
                     pass
                 self._lock_fd = None
                 self._lock_file = None
-            raise RSPException(f"Failed to open serial port {port}: {e}")
+            raise RSPException(f"Failed to open serial port {self.port}: {e}")
         
         # Give device time to stabilize
         time.sleep(0.1)
         
         self.ser.reset_input_buffer()
         self.ser.reset_output_buffer()
-        
-        # Set flags before any operations that might use them
-        self.show_progress = show_progress and sys.stdout.isatty()
-        self.verbose = verbose
-        
-        # Queue for storing response packets (non-O packets) and ACK/NAK
-        self._response_queue = queue.Queue()
-        
-        # O-packet callback for streaming output
-        self._o_packet_callback = None
-        
-        # Thread control
-        self._reader_thread = None
-        self._reader_stop = threading.Event()
-        
-        # Drain any leftover input (console prompts, etc.)
-        self._drain_input()
-        
-        # Start background reader thread
-        self._start_reader_thread()
-        
-        # Verify vSpectranext support
-        self._verify_support()
+    
+    def _read(self, size: int = 1) -> bytes:
+        """Read data from connection (USB or TCP)"""
+        if self.is_tcp:
+            try:
+                return self.sock.recv(size)
+            except socket.timeout:
+                return b''
+            except socket.error as e:
+                raise RSPIOError(f"TCP read error: {e}")
+        else:
+            return self.ser.read(size)
+    
+    def _write(self, data: bytes) -> None:
+        """Write data to connection (USB or TCP)"""
+        if self.is_tcp:
+            try:
+                self.sock.sendall(data)
+            except socket.error as e:
+                raise RSPIOError(f"TCP write error: {e}")
+        else:
+            self.ser.write(data)
+            self.ser.flush()
+    
+    def _flush(self) -> None:
+        """Flush output buffer (USB only, TCP doesn't need flushing)"""
+        if not self.is_tcp:
+            self.ser.flush()
     
     def _drain_input(self):
         """Drain any leftover data from input buffer"""
-        self.ser.timeout = 0.1
-        try:
-            while True:
-                try:
-                    data = self.ser.read(4096)
-                    if len(data) == 0:
+        if self.is_tcp:
+            # For TCP, set a short timeout and read until nothing comes
+            old_timeout = self.sock.gettimeout()
+            self.sock.settimeout(0.1)
+            try:
+                while True:
+                    try:
+                        data = self.sock.recv(4096)
+                        if len(data) == 0:
+                            break
+                    except socket.timeout:
                         break
-                except serial.serialutil.SerialException as e:
-                    if "device reports readiness to read but returned no data" in str(e):
-                        break
-                    raise
-        finally:
-            self.ser.timeout = 1
+            finally:
+                self.sock.settimeout(old_timeout)
+        else:
+            old_timeout = self.ser.timeout
+            self.ser.timeout = 0.1
+            try:
+                while True:
+                    try:
+                        data = self.ser.read(4096)
+                        if len(data) == 0:
+                            break
+                    except serial.serialutil.SerialException as e:
+                        if "device reports readiness to read but returned no data" in str(e):
+                            break
+                        raise
+            finally:
+                self.ser.timeout = old_timeout
     
     def _start_reader_thread(self):
         """Start background thread for reading RSP packets"""
@@ -307,16 +435,18 @@ class SPXConnection:
                 return None
             
             try:
-                b = self.ser.read(1)
-            except (serial.serialutil.SerialException, OSError) as e:
+                b = self._read(1)
+            except (serial.serialutil.SerialException, OSError, socket.error) as e:
                 # If shutting down, return None silently
                 if self._reader_stop.is_set():
                     return None
                 if "device reports readiness to read but returned no data" in str(e):
                     return None  # Timeout, return None
-                # Bad file descriptor usually means port was closed during shutdown
+                # Bad file descriptor usually means port/socket was closed during shutdown
                 if "Bad file descriptor" in str(e) or "bad file descriptor" in str(e):
                     return None
+                if isinstance(e, socket.timeout):
+                    return None  # TCP timeout
                 raise
             
             if len(b) == 0:
@@ -342,16 +472,18 @@ class SPXConnection:
                 return None
             
             try:
-                b = self.ser.read(1)
-            except (serial.serialutil.SerialException, OSError) as e:
+                b = self._read(1)
+            except (serial.serialutil.SerialException, OSError, socket.error) as e:
                 # If shutting down, return None silently
                 if self._reader_stop.is_set():
                     return None
                 if "device reports readiness to read but returned no data" in str(e):
                     return None  # Timeout
-                # Bad file descriptor usually means port was closed during shutdown
+                # Bad file descriptor usually means port/socket was closed during shutdown
                 if "Bad file descriptor" in str(e) or "bad file descriptor" in str(e):
                     return None
+                if isinstance(e, socket.timeout):
+                    return None  # TCP timeout
                 raise
             
             if len(b) == 0:
@@ -362,16 +494,18 @@ class SPXConnection:
         
         # Read checksum (2 hex digits)
         try:
-            checksum_hex = self.ser.read(2)
-        except (serial.serialutil.SerialException, OSError) as e:
+            checksum_hex = self._read(2)
+        except (serial.serialutil.SerialException, OSError, socket.error) as e:
             # If shutting down, return None silently
             if self._reader_stop.is_set():
                 return None
             if "device reports readiness to read but returned no data" in str(e):
                 return None  # Timeout
-            # Bad file descriptor usually means port was closed during shutdown
+            # Bad file descriptor usually means port/socket was closed during shutdown
             if "Bad file descriptor" in str(e) or "bad file descriptor" in str(e):
                 return None
+            if isinstance(e, socket.timeout):
+                return None  # TCP timeout
             raise
         
         if len(checksum_hex) != 2:
@@ -389,16 +523,14 @@ class SPXConnection:
             if self.verbose:
                 print(f"< ${packet_str}#{checksum_hex.decode('ascii')} (checksum mismatch)", file=sys.stderr)
                 print(f"> -", file=sys.stderr)
-            self.ser.write(b'-')
-            self.ser.flush()
+            self._write(b'-')
             return None  # Don't raise, just return None
         
         # Send ACK
         if self.verbose:
             print(f"< ${packet_str}#{checksum_hex.decode('ascii')}", file=sys.stderr)
             print(f"> +", file=sys.stderr)
-        self.ser.write(b'+')
-        self.ser.flush()
+        self._write(b'+')
 
         return packet_str
     
@@ -469,8 +601,7 @@ class SPXConnection:
         # Retry on NAK
         max_retries = 3
         for attempt in range(max_retries):
-            self.ser.write(packet_bytes)
-            self.ser.flush()
+            self._write(packet_bytes)
             
             # Read ACK/NAK (skip any leading '$' characters)
             try:
@@ -544,10 +675,28 @@ class SPXConnection:
                 continue
     
     def _verify_support(self):
-        """Verify vSpectranext support via qSupported"""
+        """Verify vSpectranext support via qSupported and parse packet size"""
         response = self._send_packet_with_response("qSupported")
         if "vSpectranext+" not in response:
             raise RSPNotSupportedError("Device does not support vSpectranext protocol")
+        
+        # Parse PacketSize from response (format: "PacketSize=1000;..." where 1000 is hex)
+        if "PacketSize=" in response:
+            try:
+                # Extract PacketSize value
+                parts = response.split(";")
+                for part in parts:
+                    if part.startswith("PacketSize="):
+                        packet_size_hex = part.split("=")[1]
+                        # Parse as hex (as per GDB RSP spec)
+                        self.max_packet_size = int(packet_size_hex, 16)
+                        if self.verbose:
+                            print(f"[INFO] Using packet size: {self.max_packet_size} (0x{packet_size_hex})", file=sys.stderr)
+                        break
+            except (ValueError, IndexError) as e:
+                # If parsing fails, use default
+                if self.verbose:
+                    print(f"[WARN] Failed to parse PacketSize from '{response}', using default 1024: {e}", file=sys.stderr)
     
     def _parse_errno(self, response: str) -> int:
         """Parse errno from response (F-1,<errno> or E<errno>)"""
@@ -608,11 +757,11 @@ class SPXConnection:
         """Read from file via vFile:pread (sequential read, no offset)"""
         # Limit count to fit in RSP packet (account for hex encoding overhead)
         # Response format: hex data only (2 hex digits per byte, no count prefix)
-        # Packet buffer is 1024 bytes, need space for:
+        # Need space for:
         #   - Hex data (count * 2 bytes)
         #   - Null terminator (1 byte)
-        # Max: (count * 2) + 1 <= 1024, so count <= 511
-        max_binary = (1024 - 1) // 2  # Reserve 1 byte for null terminator
+        # Max: (count * 2) + 1 <= max_packet_size, so count <= (max_packet_size - 1) / 2
+        max_binary = (self.max_packet_size - 1) // 2  # Reserve 1 byte for null terminator
         if count > max_binary:
             count = max_binary
         
@@ -637,11 +786,11 @@ class SPXConnection:
     
     def _vfile_pwrite(self, fd: int, data: bytes) -> int:
         """Write to file via vFile:pwrite (sequential write, no offset)"""
-        # Limit chunk size to fit in RSP packet (1024 bytes total)
+        # Limit chunk size to fit in RSP packet
         # Packet format: "vFile:pwrite:<fd>,<hex-data>"
         # Reserve ~25 bytes for packet overhead (prefix + checksum)
-        # Hex encoding doubles size, so max binary = (1024 - 25) / 2 = ~499 bytes
-        max_binary = (1024 - 25) // 2
+        # Hex encoding doubles size, so max binary = (max_packet_size - 25) / 2
+        max_binary = (self.max_packet_size - 25) // 2
         if len(data) > max_binary:
             data = data[:max_binary]
         
@@ -925,8 +1074,8 @@ class SPXConnection:
             with open(local_path, 'rb') as f:
                 while transferred < file_size:
                     # Read chunk from local file
-                    # Limit to packet size: (1024 - 25) / 2 = ~499 bytes max
-                    max_chunk = (1024 - 25) // 2
+                    # Limit to packet size: (max_packet_size - 25) / 2
+                    max_chunk = (self.max_packet_size - 25) // 2
                     chunk = f.read(max_chunk)
                     if not chunk:
                         break
@@ -1046,19 +1195,36 @@ class SPXConnection:
         # Stop reader thread
         if self._reader_thread is not None:
             self._reader_stop.set()
-            # Reduce serial timeout so reader thread wakes up faster
-            if self.ser and self.ser.is_open:
-                old_timeout = self.ser.timeout
-                self.ser.timeout = 0.01  # Very short timeout to wake up quickly
+            # Reduce timeout so reader thread wakes up faster
+            if self.is_tcp:
+                if self.sock:
+                    old_timeout = self.sock.gettimeout()
+                    self.sock.settimeout(0.01)  # Very short timeout to wake up quickly
+            else:
+                if self.ser and self.ser.is_open:
+                    old_timeout = self.ser.timeout
+                    self.ser.timeout = 0.01  # Very short timeout to wake up quickly
             self._reader_thread.join(timeout=0.1)  # Reduced join timeout
-            # Restore timeout if port is still open
-            if self.ser and self.ser.is_open:
-                self.ser.timeout = old_timeout
+            # Restore timeout if connection is still open
+            if self.is_tcp:
+                if self.sock:
+                    self.sock.settimeout(old_timeout)
+            else:
+                if self.ser and self.ser.is_open:
+                    self.ser.timeout = old_timeout
             self._reader_thread = None
         
-        # Close serial port
-        if self.ser and self.ser.is_open:
-            self.ser.close()
+        # Close connection
+        if self.is_tcp:
+            if self.sock:
+                try:
+                    self.sock.close()
+                except:
+                    pass
+                self.sock = None
+        else:
+            if self.ser and self.ser.is_open:
+                self.ser.close()
         
         # Release lock
         if HAS_FCNTL and self._lock_fd is not None:
@@ -1266,7 +1432,7 @@ def cmd_exec(args, show_progress: bool = True, verbose: bool = False):
 
 def main():
     parser = argparse.ArgumentParser(description='SPX - Spectranext tool')
-    parser.add_argument('--port', '-p', help='Serial port (auto-detect if not specified)')
+    parser.add_argument('--port', '-p', help='Serial port (e.g., /dev/ttyACM0) or TCP address (e.g., localhost:1337). Auto-detect USB first, then fall back to localhost:1337 if not specified.')
     parser.add_argument('--no-progress', action='store_true', help='Disable progress indicators')
     parser.add_argument('--verbose', '-v', action='store_true', help='Log all data sent and received')
     

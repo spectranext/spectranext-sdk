@@ -1,0 +1,37 @@
+#!/bin/bash
+# SPX wrapper - forwards arguments to spx.py
+# Usage: spx <command> [args...]
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Find Python command - prefer venv Python, fall back to system Python
+PYTHON_CMD=""
+
+# Try venv Python from ../venv relative to script directory
+VENV_DIR="$SCRIPT_DIR/../venv"
+if [ -d "$VENV_DIR" ]; then
+    if [ -x "$VENV_DIR/bin/python3" ]; then
+        PYTHON_CMD="$VENV_DIR/bin/python3"
+    elif [ -x "$VENV_DIR/bin/python" ]; then
+        PYTHON_CMD="$VENV_DIR/bin/python"
+    fi
+fi
+
+# Fallback to system Python
+if [ -z "$PYTHON_CMD" ]; then
+    if command -v python3 >/dev/null 2>&1; then
+        PYTHON_CMD="python3"
+    elif command -v python >/dev/null 2>&1; then
+        PYTHON_CMD="python"
+    fi
+fi
+
+# Verify Python works
+if [ -z "$PYTHON_CMD" ] || ! "$PYTHON_CMD" --version >/dev/null 2>&1; then
+    echo "Error: Python not found" >&2
+    exit 1
+fi
+
+# Forward all arguments to spx.py
+exec "$PYTHON_CMD" "$SCRIPT_DIR/spx.py" "$@"

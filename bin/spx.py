@@ -1358,10 +1358,85 @@ def cmd_reboot(args, show_progress: bool = True, verbose: bool = False):
 
 def cmd_autoboot(args, show_progress: bool = True, verbose: bool = False):
     """Configure autoboot from xfs://ram/ and reboot ZX Spectrum"""
+    import signal
+    import threading
+    import time
+    
     conn = SPXConnection(args.port, show_progress=show_progress, verbose=verbose)
+    
+    # Flag to track if we should continue streaming
+    streaming = False
+    should_stop = threading.Event()
+    
+    def o_packet_handler(log_msg: str):
+        """Handle O-packets (log output)"""
+        # Print without newline prefix, just the message
+        print(log_msg, end='', flush=True)
+    
+    def signal_handler(signum, frame):
+        """Handle Ctrl-C"""
+        nonlocal streaming
+        if streaming:
+            print("\n[Interrupted]", file=sys.stderr)
+            should_stop.set()
+        else:
+            sys.exit(1)
+    
+    # Set up signal handler for Ctrl-C
+    signal.signal(signal.SIGINT, signal_handler)
+    
     try:
+        # Check if follow mode is enabled
+        # When --follow is used without args, args.follow is True (const)
+        # When --follow is used with a number, args.follow is that int
+        follow_enabled = args.follow is not None
+        # If args.follow is True (const), follow forever (no time limit)
+        # If args.follow is an int, follow for that many seconds
+        if args.follow is True:
+            follow_seconds = None  # Follow forever
+        elif isinstance(args.follow, int):
+            follow_seconds = args.follow
+        else:
+            follow_seconds = None  # Shouldn't happen, but default to forever
+
+        # Call autoboot
         conn.autoboot()
-        print("Autoboot configured and reboot command sent")
+        
+        if not follow_enabled:
+            # Normal mode: just print success and exit
+            print("Autoboot configured and reboot command sent")
+        else:
+            # Follow mode: stream output
+            streaming = True
+            if args.verbose:
+                if follow_seconds is not None:
+                    print(f"[Following terminal output for {follow_seconds} seconds]", file=sys.stderr)
+                else:
+                    print("[Following terminal output - Press Ctrl-C to stop]", file=sys.stderr)
+            
+            # Set O-packet callback to stream output
+            conn.set_o_packet_callback(o_packet_handler)
+            
+            # Keep connection alive and stream O-packets
+            try:
+                start_time = time.time()
+                while True:  # Loop forever until interrupted or time limit
+                    # Check if we should stop (Ctrl-C)
+                    if should_stop.is_set():
+                        break
+                    
+                    # Check if we've exceeded the time limit (if specified)
+                    if follow_seconds is not None:
+                        elapsed = time.time() - start_time
+                        if elapsed >= follow_seconds:
+                            break
+                    
+                    # Sleep to avoid busy-waiting
+                    time.sleep(0.1)
+            except KeyboardInterrupt:
+                print("\n[Interrupted]", file=sys.stderr)
+            finally:
+                conn.set_o_packet_callback(None)
     finally:
         conn.close()
 
@@ -1394,9 +1469,18 @@ def cmd_exec(args, show_progress: bool = True, verbose: bool = False):
     signal.signal(signal.SIGINT, signal_handler)
     
     try:
-        # Check if follow mode is enabled (True or a number)
+        # Check if follow mode is enabled
+        # When --follow is used without args, args.follow is True (const)
+        # When --follow is used with a number, args.follow is that int
         follow_enabled = args.follow is not None
-        follow_seconds = args.follow if isinstance(args.follow, int) else None
+        # If args.follow is True (const), follow forever (no time limit)
+        # If args.follow is an int, follow for that many seconds
+        if args.follow is True:
+            follow_seconds = None  # Follow forever
+        elif isinstance(args.follow, int):
+            follow_seconds = args.follow
+        else:
+            follow_seconds = None  # Shouldn't happen, but default to forever
         
         # Execute command
         # Only wait for response if follow mode is enabled
@@ -1488,6 +1572,8 @@ def main():
     
     # AUTOBOOT command
     parser_autoboot = subparsers.add_parser('autoboot', help='Configure autoboot from xfs://ram/ and reboot ZX Spectrum')
+    parser_autoboot.add_argument('--follow', '-f', nargs='?', type=int, const=True, metavar='SECONDS',
+                                help='Stream terminal output continuously. If SECONDS is specified, follow for that many seconds then exit. If not specified, follow until Ctrl-C')
     
     # EXEC command
     parser_exec = subparsers.add_parser('exec', help='Execute a CLI command on the device')

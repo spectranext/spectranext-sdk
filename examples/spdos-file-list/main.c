@@ -26,6 +26,7 @@ int main(void)
     static char dirbuf[256];
     int file_count = 0;
     int dir_count = 0;
+    const int max_files = 5;
 
     while (readdir(dirhandle, dirbuf) == 0) {
         char full_path[512];
@@ -36,18 +37,25 @@ int main(void)
             dir_count++;
             printf("  [DIR]  %s\n", dirbuf);
         } else {
-            file_count++;
-            printf("  [FILE] %s", dirbuf);
+            if (file_count < max_files) {
+                printf("  [FILE] %s", dirbuf);
 
-            // Get file size using stat
-            static unsigned char statbuf[256];
-            struct stat* st = (struct stat*)statbuf;
-            unsigned long file_size = 0;
-            if (stat(full_path, st) == 0) {
-                file_size = *(unsigned long*)(statbuf + 6); // STAT_SIZE offset
-                printf(" (%lu bytes)", file_size);
+                // Get file size using stat
+                static unsigned char statbuf[256];
+                struct stat* st = (struct stat*)statbuf;
+                unsigned long file_size = 0;
+                if (stat(full_path, st) == 0) {
+                    file_size = *(unsigned long*)(statbuf + 6); // STAT_SIZE offset
+                    printf(" (%lu bytes)", file_size);
+                }
+                printf("\n");
             }
-            printf("\n");
+            file_count++;
+            
+            // Stop after listing max_files
+            if (file_count >= max_files) {
+                break;
+            }
         }
     }
 

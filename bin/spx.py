@@ -38,6 +38,195 @@ _spec = importlib.util.spec_from_file_location('spectranext_detect', _detect_pat
 _spectranext_detect = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_spectranext_detect)
 find_spectranext_device = _spectranext_detect.find_spectranext_device
+VENDOR_ID = _spectranext_detect.VENDOR_ID
+PRODUCT_ID = _spectranext_detect.PRODUCT_ID
+
+
+def _is_usb_busy_error(exc: BaseException) -> bool:
+    """True if opening the serial device failed because it is busy or in use (e.g. Web Serial)."""
+    if isinstance(exc, PermissionError):
+        return True
+    if isinstance(exc, OSError):
+        if exc.errno in (errno.EBUSY, errno.EACCES, errno.EAGAIN, errno.EPERM):
+            return True
+    msg = str(exc).lower()
+    needles = (
+        "busy",
+        "resource busy",
+        "access denied",
+        "access is denied",
+        "could not open port",
+        "permission denied",
+        "being used",
+        "in use",
+        "exclusively",
+        "could not exclusively lock",
+    )
+    return any(n in msg for n in needles)
+
+
+def _linux_usb_device_sysfs_from_tty(tty_path: str) -> Optional[str]:
+    """Return sysfs path of the USB device (parent of interface) for a tty, if Spectranext VID/PID."""
+    tty_name = os.path.basename(tty_path)
+    tty_device = f"/sys/class/tty/{tty_name}/device"
+    try:
+        dev = os.path.realpath(tty_device)
+    except OSError:
+        return None
+    cur = dev
+    for _ in range(16):
+        vid_path = os.path.join(cur, "idVendor")
+        if os.path.isfile(vid_path):
+            try:
+                with open(vid_path, encoding="ascii") as f:
+                    vid = int(f.read().strip(), 16)
+                with open(os.path.join(cur, "idProduct"), encoding="ascii") as f:
+                    pid = int(f.read().strip(), 16)
+            except (OSError, ValueError):
+                return None
+            if vid == VENDOR_ID and pid == PRODUCT_ID:
+                return cur
+            return None
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    return None
+
+
+def _linux_sysfs_usb_reset(usb_path: str, verbose: bool) -> bool:
+    """Linux: toggle authorized to force USB re-enumeration (may require root)."""
+    auth = os.path.join(usb_path, "authorized")
+    if not os.path.exists(auth):
+        return False
+    try:
+        if verbose:
+            print(f"[USB] Reset via sysfs {usb_path} (authorized)...", file=sys.stderr)
+        with open(auth, "w", encoding="ascii") as f:
+            f.write("0")
+        time.sleep(0.35)
+        with open(auth, "w", encoding="ascii") as f:
+            f.write("1")
+        return True
+    except OSError as e:
+        if verbose:
+            print(f"[USB] sysfs reset failed: {e}", file=sys.stderr)
+        return False
+
+
+def _try_reset_spectranext_usb(port_path: str, verbose: bool = False) -> bool:
+    """
+    Reset the Spectranext USB device so another holder (e.g. browser Web Serial) releases the port.
+    Tries PyUSB first, then Linux sysfs authorized toggle.
+    """
+    # 1) PyUSB (works on Linux/macOS/Windows with appropriate backend)
+    try:
+        import usb.core
+    except ImportError:
+        if verbose:
+            print("[USB] pyusb not installed; install with: pip install pyusb", file=sys.stderr)
+    else:
+        try:
+            serial_num = None
+            try:
+                import serial.tools.list_ports
+                for p in serial.tools.list_ports.comports():
+                    if p.device == port_path and p.vid == VENDOR_ID and p.pid == PRODUCT_ID:
+                        serial_num = getattr(p, "serial_number", None)
+                        break
+            except Exception:
+                pass
+            devs = list(usb.core.find(find_all=True, idVendor=VENDOR_ID, idProduct=PRODUCT_ID))
+            if not devs:
+                if verbose:
+                    print("[USB] No USB device with Spectranext VID/PID found for reset", file=sys.stderr)
+            else:
+                to_reset = None
+                if len(devs) == 1:
+                    to_reset = devs[0]
+                elif serial_num:
+                    for d in devs:
+                        try:
+                            if getattr(d, "serial_number", None) == serial_num:
+                                to_reset = d
+                                break
+                        except Exception:
+                            continue
+                if to_reset is None and devs:
+                    to_reset = devs[0]
+                if to_reset is not None:
+                    if verbose:
+                        print("[USB] Issuing USB device reset (pyusb)...", file=sys.stderr)
+                    to_reset.reset()
+                    time.sleep(1.5)
+                    return True
+        except Exception as e:
+            if verbose:
+                print(f"[USB] pyusb reset failed: {e}", file=sys.stderr)
+
+    # 2) Linux sysfs (no pyusb; often needs root for authorized)
+    if sys.platform.startswith("linux"):
+        usb_path = _linux_usb_device_sysfs_from_tty(port_path)
+        if usb_path and _linux_sysfs_usb_reset(usb_path, verbose):
+            time.sleep(1.5)
+            return True
+
+    return False
+
+
+def _prefer_cu_serial_port(port_path: str) -> str:
+    """On macOS, prefer /dev/cu.* over /dev/tty.* for opening (non-blocking caller port)."""
+    if sys.platform != "darwin" or not port_path:
+        return port_path
+    base = os.path.basename(port_path)
+    if base.startswith("tty.") and not base.startswith("cu."):
+        alt = "/dev/cu." + base[4:]
+        if os.path.exists(alt):
+            return alt
+    return port_path
+
+
+def _rediscover_spectranext_port(old_port: str, verbose: bool) -> Optional[str]:
+    """
+    After USB reset, the CDC device re-enumerates; the serial device path often changes
+    (e.g. /dev/cu.usbmodem101 -> /dev/cu.usbmodem102 on macOS). Poll until Spectranext reappears.
+    """
+    deadline = time.monotonic() + 20.0
+    while time.monotonic() < deadline:
+        new_port, _ = find_spectranext_device()
+        if new_port:
+            np = _prefer_cu_serial_port(new_port)
+            if verbose and np != old_port:
+                print(
+                    f"[USB] Spectranext serial port after reset: {np} (was {old_port})",
+                    file=sys.stderr,
+                )
+            elif verbose:
+                print(f"[USB] Spectranext serial port: {np}", file=sys.stderr)
+            return np
+        time.sleep(0.25)
+    if verbose:
+        print(
+            "[USB] Timed out waiting for Spectranext to re-enumerate; retrying previous path",
+            file=sys.stderr,
+        )
+    return None
+
+
+def _open_device_path_with_busy_retry(path: str, timeout_s: float = 12.0, verbose: bool = False) -> int:
+    """Open device node for locking; retry on EBUSY while kernel / browser releases the port."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            return os.open(path, os.O_RDWR)
+        except OSError as e:
+            if e.errno == errno.EBUSY and time.monotonic() < deadline:
+                if verbose:
+                    print(f"[USB] Waiting for {path} to become available...", file=sys.stderr)
+                time.sleep(0.25)
+                continue
+            raise
+    raise OSError(errno.EBUSY, os.strerror(errno.EBUSY), path)
 
 
 # Exception classes
@@ -139,6 +328,10 @@ class SPXConnection:
                     self.is_tcp = True
                     self.port = "localhost:1337"
         
+        # macOS: use /dev/cu.* for opening (avoids some lock/busy issues vs /dev/tty.*)
+        if not self.is_tcp and self.port:
+            self.port = _prefer_cu_serial_port(self.port)
+        
         # Only raise exception if port is still not set (shouldn't happen after auto-detect fallback)
         if not self.port:
             raise RSPException("Could not find SPX device. Make sure device is connected (USB) or GDB server is running (TCP).")
@@ -208,14 +401,31 @@ class SPXConnection:
             else:
                 raise RSPException(f"Failed to connect to {host}:{port}: {e}")
     
-    def _connect_usb(self):
-        """Connect via USB serial"""
+    def _refresh_usb_port_after_reset(self) -> None:
+        """After USB reset, update self.port to the new CDC device path (e.g. macOS re-enumeration)."""
+        p = _rediscover_spectranext_port(self.port, self.verbose)
+        if p:
+            self.port = p
+    
+    def _connect_usb(self, _reset_attempted: bool = False):
+        """
+        Connect via USB serial.
+
+        If the port is busy (e.g. held by the browser Web Serial / WebUSB), we try a USB-level
+        reset once to release it, then reconnect.
+        """
         # Acquire exclusive lock on the serial port device file
         if HAS_FCNTL:
             # Unix: lock the device file directly
             try:
                 # Open lock file (the device file itself)
-                self._lock_fd = os.open(self.port, os.O_RDWR)
+                if _reset_attempted:
+                    # After reset, path may have changed; kernel may still briefly report EBUSY
+                    self._lock_fd = _open_device_path_with_busy_retry(
+                        self.port, timeout_s=15.0, verbose=self.verbose
+                    )
+                else:
+                    self._lock_fd = os.open(self.port, os.O_RDWR)
                 # Try to acquire exclusive lock (non-blocking first)
                 try:
                     fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -236,6 +446,15 @@ class SPXConnection:
                 if self._lock_fd is not None:
                     os.close(self._lock_fd)
                     self._lock_fd = None
+                if (
+                    not _reset_attempted
+                    and _is_usb_busy_error(e)
+                    and _try_reset_spectranext_usb(self.port, self.verbose)
+                ):
+                    self._refresh_usb_port_after_reset()
+                    time.sleep(0.5)
+                    self._connect_usb(_reset_attempted=True)
+                    return
                 raise RSPException(f"Failed to open device file {self.port} for locking: {e}")
         elif HAS_MSVCRT:
             # Windows: create a lock file and lock it
@@ -313,6 +532,15 @@ class SPXConnection:
                     pass
                 self._lock_fd = None
                 self._lock_file = None
+            if (
+                not _reset_attempted
+                and _is_usb_busy_error(e)
+                and _try_reset_spectranext_usb(self.port, self.verbose)
+            ):
+                self._refresh_usb_port_after_reset()
+                time.sleep(0.75)
+                self._connect_usb(_reset_attempted=True)
+                return
             raise RSPException(f"Failed to open serial port {self.port}: {e}")
         
         # Give device time to stabilize

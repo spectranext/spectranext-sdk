@@ -71,4 +71,15 @@ struct spectranext_controller_registers_t
 
 #pragma pack(pop)
 
+#ifdef __SPECTRUM__
+/*
+ * Detect presence of spectranext cartridge.
+ *
+ * Returns 1 if Spectranext is detected
+ * Returns 0 if Spectranext was not, but original Spectranet was.
+ * Returns -1 on lack of any hardware
+ */
+extern int __LIB__ __FASTCALL__ spectranext_detect(void);
+#endif
+
 #endif

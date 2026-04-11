@@ -17,6 +17,11 @@ import signal
 import errno
 from typing import Optional, Tuple, List
 
+# RP2350 CLI: hidden exec result markers in terminal stream (O-packets). Strip from output;
+# map to process exit code when seen (spx exec).
+EXEC_RESULT_SUCCESS = b"\x1e\x06\x1f"
+EXEC_RESULT_FAILURE = b"\x1e\x15\x1f"
+
 # fcntl is Unix-only, not available on Windows
 try:
     import fcntl
@@ -1669,59 +1674,74 @@ def cmd_autoboot(args, show_progress: bool = True, verbose: bool = False):
         conn.close()
 
 
-def cmd_exec(args, show_progress: bool = True, verbose: bool = False):
-    """Execute a CLI command on the device"""
+def cmd_exec(args, show_progress: bool = True, verbose: bool = False) -> int:
+    """Execute a CLI command on the device. Exit code 0 = success, 1 = failure (see firmware markers)."""
     import signal
-    
+
     conn = SPXConnection(args.port, show_progress=show_progress, verbose=verbose)
-    
-    # Flag to track if we should continue streaming
+
     streaming = False
     should_stop = threading.Event()
-    
-    def o_packet_handler(log_msg: str):
-        """Handle O-packets (log output)"""
-        # Print without newline prefix, just the message
-        print(log_msg, end='', flush=True)
-    
+    pending = bytearray()
+    exec_exit: Optional[int] = None
+
+    def o_packet_handler(log_msg: str) -> None:
+        """Handle O-packets: stream text, detect hidden exec result markers, stop early."""
+        nonlocal exec_exit
+        if exec_exit is not None:
+            return
+        pending.extend(log_msg.encode("utf-8", errors="replace"))
+        for seq, code in ((EXEC_RESULT_SUCCESS, 0), (EXEC_RESULT_FAILURE, 1)):
+            idx = pending.find(seq)
+            if idx != -1:
+                if idx > 0:
+                    print(pending[:idx].decode("utf-8", errors="replace"), end="", flush=True)
+                pending.clear()
+                exec_exit = code
+                should_stop.set()
+                return
+        # Marker may span O-packets (length 3); keep last 2 bytes until next chunk.
+        if len(pending) > 2:
+            emit_len = len(pending) - 2
+            print(pending[:emit_len].decode("utf-8", errors="replace"), end="", flush=True)
+            del pending[:emit_len]
+
     def signal_handler(signum, frame):
-        """Handle Ctrl-C"""
         nonlocal streaming
         if streaming:
             print("\n[Interrupted]", file=sys.stderr)
             should_stop.set()
         else:
             sys.exit(1)
-    
-    # Set up signal handler for Ctrl-C
+
     signal.signal(signal.SIGINT, signal_handler)
-    
+
     try:
-        # Check if follow mode is enabled
-        # When --follow is used without args, args.follow is True (const)
-        # When --follow is used with a number, args.follow is that int
         follow_enabled = args.follow is not None
-        # If args.follow is True (const), follow forever (no time limit)
-        # If args.follow is an int, follow for that many seconds
         if args.follow is True:
-            follow_seconds = None  # Follow forever
+            follow_seconds = None
         elif isinstance(args.follow, int):
             follow_seconds = args.follow
         else:
-            follow_seconds = None  # Shouldn't happen, but default to forever
-        
-        # Execute command
-        # Only wait for response if follow mode is enabled
-        # In follow mode, wait forever for OK response (O-packets may arrive first)
-        response = conn.execute_command(args.cmd, wait_for_response=follow_enabled, 
-                                       response_timeout=None if follow_enabled else None)
-        
-        if follow_enabled and response and response != 'OK':
+            follow_seconds = None
+
+        # Before execute_command so O-packets during the command are not sent to default [LOG].
+        conn.set_o_packet_callback(o_packet_handler)
+
+        response = conn.execute_command(
+            args.cmd,
+            wait_for_response=follow_enabled,
+            response_timeout=None if follow_enabled else None,
+        )
+
+        if follow_enabled and response and response != "OK":
             print(f"Error: {response}", file=sys.stderr)
-            return
+            return 1
+
+        if exec_exit is not None:
+            return exec_exit
 
         if follow_enabled:
-            # Follow mode: stream output
             streaming = True
             if args.verbose:
                 if follow_seconds is not None:
@@ -1730,15 +1750,9 @@ def cmd_exec(args, show_progress: bool = True, verbose: bool = False):
                 else:
                     print(f"[Executing: {args.cmd}]", file=sys.stderr)
                     print("[Press Ctrl-C to stop]", file=sys.stderr)
-            
-            # Set O-packet callback to stream output
-            conn.set_o_packet_callback(o_packet_handler)
-            
-            # Keep connection alive and stream O-packets
             try:
                 start_time = time.time()
-                while not should_stop.is_set():
-                    # Check if we've exceeded the time limit (if specified)
+                while not should_stop.is_set() and exec_exit is None:
                     if follow_seconds is not None:
                         elapsed = time.time() - start_time
                         if elapsed >= follow_seconds:
@@ -1746,14 +1760,18 @@ def cmd_exec(args, show_progress: bool = True, verbose: bool = False):
                     time.sleep(0.1)
             except KeyboardInterrupt:
                 print("\n[Interrupted]", file=sys.stderr)
-            finally:
-                conn.set_o_packet_callback(None)
         else:
-            # Normal mode: exit immediately after ACK
-            # O-packets that arrive after OK response won't be displayed
-            pass
+            # Without --follow, allow a short window for markers that arrive right after ACK.
+            deadline = time.time() + 1.0
+            while exec_exit is None and time.time() < deadline:
+                time.sleep(0.05)
     finally:
+        if pending:
+            print(pending.decode("utf-8", errors="replace"), end="", flush=True)
+        conn.set_o_packet_callback(None)
         conn.close()
+
+    return exec_exit if exec_exit is not None else 0
 
 
 def main():
@@ -1839,7 +1857,7 @@ def main():
         elif args.command == 'autoboot':
             cmd_autoboot(args, show_progress, verbose)
         elif args.command == 'exec':
-            cmd_exec(args, show_progress, verbose)
+            sys.exit(cmd_exec(args, show_progress, verbose))
     except RSPNotFoundError as e:
         print(f"Error: Not found - {e}", file=sys.stderr)
         sys.exit(1)

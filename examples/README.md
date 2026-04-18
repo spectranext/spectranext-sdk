@@ -27,6 +27,17 @@ Demonstrates how to read files using `libspdos` with XFS or TNFS filesystems.
 
 **See also:** [File I/O Documentation](../../docs/docs/examples/file-io.md)
 
+### hacker-news
+
+Fetches **top stories** via the **[HNPWA API](https://github.com/tastejs/hacker-news-pwas/blob/master/docs/api.md)** by mounting  
+`https://api.hnpwa.com/v0` — **`news/1.json`** returns a full **array of story rows** (id, title, points, url) in **one** HTTPS request (no per-id `item/` loop for listing).
+
+**Features:**
+
+- Aggregated feeds: `news/1.json`, `show/1.json`, optional `item/<id>.json`  
+- Chunked `read()` + jsmn (vendored MIT)  
+- `hn_api` (mount + fetch) vs `hn_json` (parse)  
+
 ## Uploading to Device
 
 After building, upload to your Spectranext device:

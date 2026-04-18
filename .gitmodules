@@ -1,0 +1,3 @@
+[submodule "examples/hacker-news/zxgui"]
+	path = examples/hacker-news/zxgui
+	url = https://github.com/speccytools/zxgui.git

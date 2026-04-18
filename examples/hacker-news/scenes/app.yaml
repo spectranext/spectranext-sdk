@@ -1,0 +1,97 @@
+version: 1
+scenes:
+  splash_scene:
+    - name: splash_image
+      type: image
+      boundaries: 2, 8, 16, 8
+      source: splash
+      colors: splash_colors
+    - name: loading_label
+      type: label
+      boundaries: 20, 11, 10, 2
+      buffer: loading_text
+      buffer_size: 16
+      color: INK_WHITE | PAPER_BLACK | BRIGHT
+      flags: 0
+  news_scene:
+    - name: news_header
+      type: label
+      boundaries: 1, 0, 30, 1
+      title: "Top SHOW News"
+      color: INK_WHITE | PAPER_BLACK | BRIGHT
+      flags: 0
+    - name: news_select
+      type: select
+      focus: true
+      boundaries: 1, 2, 30, 14
+      obtain_data: obtain_news_data
+      selected: on_news_selected
+      options_capacity: 16
+      user: "NULL"
+    - name: news_preview
+      type: label
+      boundaries: 1, 18, 30, 4
+      buffer: news_preview_text
+      buffer_size: 256
+      color: INK_CYAN | PAPER_BLACK | BRIGHT
+      flags: 8
+    - name: news_open_button
+      type: button
+      boundaries: 1, 23, 14, 1
+      key: GUI_KEY_CODE_RETURN
+      icon: GUI_ICON_RETURN
+      title: "Open Story"
+      callback: on_open_story_pressed
+    - name: news_refresh_button
+      type: button
+      boundaries: 18, 23, 12, 1
+      key: 114
+      icon: GUI_ICON_R
+      title: "Refresh"
+      callback: on_refresh_pressed
+  article_scene:
+    - name: article_header
+      type: label
+      boundaries: 1, 0, 30, 1
+      title: "Article"
+      color: INK_WHITE | PAPER_BLACK | BRIGHT
+      flags: 0
+    - name: article_title
+      type: label
+      boundaries: 1, 2, 30, 4
+      buffer: s_article.title
+      color: INK_YELLOW | PAPER_BLACK | BRIGHT
+      flags: 8
+    - name: article_content
+      type: label
+      boundaries: 1, 5, 30, 10
+      buffer: s_article.content
+      color: INK_WHITE | PAPER_BLACK
+      flags: 8
+    - name: article_url
+      type: label
+      boundaries: 1, 16, 30, 6
+      buffer: s_article.url
+      color: INK_CYAN | PAPER_BLACK | BRIGHT
+      flags: 8
+    - name: article_back_button
+      type: button
+      boundaries: 1, 23, 10, 1
+      key: 66
+      icon: GUI_ICON_B
+      title: "Back"
+      callback: on_back_pressed
+  message_scene:
+    - name: message_header
+      type: label
+      boundaries: 14, 7, 30, 1
+      title: "Message"
+      color: INK_WHITE | PAPER_BLACK | BRIGHT
+      flags: 0
+    - name: message_body
+      type: label
+      boundaries: 4, 9, 24, 8
+      buffer: message_text
+      buffer_size: 256
+      color: INK_YELLOW | PAPER_BLACK | BRIGHT
+      flags: 8

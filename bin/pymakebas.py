@@ -169,40 +169,40 @@ def dbl2spec(num: float) -> Tuple[bool, int, int]:
         # '-' character to determine negativity - tests confirm this.
         # As such, we *completely ignore* the sign of the number.
         num = abs(num)
-        
+
         # binary standard form goes from 0.50000... to 0.9999...(dec)
         exp = 0
         while num >= 1.0:
             num /= 2.0
             exp += 1
-        
+
         while num < 0.5:
             num *= 2.0
             exp -= 1
-        
+
         # check the range of exp... -128 <= exp <= 127
         if exp < -128 or exp > 127:
             return (False, 0, 0)
-        
+
         exp = 128 + exp
-        
+
         # roll the bits off the mantissa
         num *= 2.0  # make it so that the 0.5ths bit is the integer part
-        
+
         man = 0
         for f in range(32):
             man <<= 1
             man |= int(num)
             num -= int(num)
             num *= 2.0
-        
+
         # round up if needed
         if int(num) and man != 0xFFFFFFFF:
             man += 1
-        
+
         # zero out the top bit
         man &= 0x7FFFFFFF
-    
+
     return (True, exp, man)
 
 
@@ -210,16 +210,16 @@ def grok_hex(ptr: str, textlinenum: int) -> Tuple[int, str]:
     """Parse hexadecimal number starting with 0x"""
     hexits = "0123456789abcdefABCDEF"
     v = 0
-    
+
     if len(ptr) < 2 or ptr[:2] != "0x":
         print(f"line {textlinenum}: bad BIN 0x... number", file=sys.stderr)
         sys.exit(1)
-    
+
     ptr = ptr[2:]
     if not ptr or ptr[0] not in hexits:
         print(f"line {textlinenum}: bad BIN 0x... number", file=sys.stderr)
         sys.exit(1)
-    
+
     i = 0
     while i < len(ptr) and ptr[i] in hexits:
         n = hexits.index(ptr[i])
@@ -227,28 +227,28 @@ def grok_hex(ptr: str, textlinenum: int) -> Tuple[int, str]:
             n -= 6
         v = v * 16 + n
         i += 1
-    
+
     return (v, ptr[i:])
 
 
 def grok_binary(ptr: str, textlinenum: int) -> Tuple[int, str]:
     """Parse binary number"""
     ptr = ptr.lstrip()
-    
+
     if not ptr or (ptr[0] != '0' and ptr[0] != '1'):
         print(f"line {textlinenum}: bad BIN number", file=sys.stderr)
         sys.exit(1)
-    
+
     if len(ptr) > 1 and (ptr[1] == 'x' or ptr[1] == 'X'):
         return grok_hex(ptr, textlinenum)
-    
+
     v = 0
     i = 0
     while i < len(ptr) and (ptr[i] == '0' or ptr[i] == '1'):
         v *= 2
         v += ord(ptr[i]) - ord('0')
         i += 1
-    
+
     return (v, ptr[i:])
 
 
@@ -257,28 +257,28 @@ class QuoteTokList:
     def __init__(self):
         self.head: Optional[Node] = None
         self.curr: Optional[Node] = None
-    
+
     def add_no_dupes(self, word: str) -> Node:
         """Add line number to list if not already present"""
         num = int(word)
         tmp = self.head
-        
+
         while tmp:
             if tmp.number == num:
                 return tmp  # reject duplicate line number
             tmp = tmp.next
-        
+
         ptr = Node(num)
         ptr.next = None
-        
+
         if self.head:
             self.curr.next = ptr
         else:
             self.head = ptr
         self.curr = ptr
-        
+
         return ptr
-    
+
     def search(self, current_line_number: int) -> bool:
         """Search for line number in list"""
         ptr = self.head
@@ -287,7 +287,7 @@ class QuoteTokList:
                 return True
             ptr = ptr.next
         return False
-    
+
     def free(self):
         """Free all nodes"""
         ptr = self.head
@@ -308,7 +308,7 @@ def is_number(string: str) -> bool:
             end_idx += 1
         if end_idx >= len(string):
             return False
-        
+
         # Try to parse as integer
         val = int(string[end_idx:])
         # Check remaining characters are only whitespace
@@ -327,16 +327,16 @@ def grok_block(ptr: str, textlinenum: int) -> int:
         "  ", " '", "' ", "''", " .", " :", "'.", "':",
         ". ", ".'", ": ", ":'", "..", ".:", ":.", "::",
     ]
-    
+
     if len(ptr) < 3:
         print(f"line {textlinenum}: invalid block graphics escape", file=sys.stderr)
         sys.exit(1)
-    
+
     block_str = ptr[1:3]
     for f, pattern in enumerate(lookup):
         if block_str == pattern:
             return 128 + f
-    
+
     print(f"line {textlinenum}: invalid block graphics escape", file=sys.stderr)
     sys.exit(1)
 
@@ -366,11 +366,11 @@ def parse_options(argv):
     global output_format, use_labels, startline, autostart, autoincr
     global speccy_filename, startlabel, quot_tok_global, quot_tok_list
     global quot_tok_line_number_count, infile, outfile
-    
+
     startlabel = ""
     infile = "-"
     outfile = DEFAULT_OUTPUT
-    
+
     try:
         opts, args = getopt.getopt(argv, "a:hi:ln:o:pq:rs:")
     except getopt.GetoptError as e:
@@ -389,7 +389,7 @@ def parse_options(argv):
         else:
             print(f"Option `{optopt}' not recognised.", file=sys.stderr)
         sys.exit(1)
-    
+
     for opt, arg in opts:
         if opt == '-a':
             if arg.startswith('@'):
@@ -446,11 +446,11 @@ def parse_options(argv):
             if autostart < 0 or autostart > 9999:
                 print("Label start line must be in the range 0 to 9999.", file=sys.stderr)
                 sys.exit(1)
-    
+
     if len(args) > 1:
         usage_help()
         sys.exit(1)
-    
+
     if len(args) == 1:
         if len(args[0]) > 1023:
             print("Filename too long", file=sys.stderr)
@@ -464,7 +464,7 @@ def main():
     global speccy_filename, startlabel, labels, label_lines, labelend
     global quot_tok_global, quot_tok_list, quot_tok_line_number_count
     global infile, outfile
-    
+
     # Initialize globals
     output_format = OutputFormat.TAP
     use_labels = False
@@ -473,21 +473,21 @@ def main():
     autoincr = 2
     speccy_filename = ""
     startlabel = ""
-    
+
     labels = []
     label_lines = []
     labelend = 0
-    
+
     quot_tok_global = False
     quot_tok_list = QuoteTokList()
     quot_tok_line_number_count = 0
-    
+
     infile = "-"
     outfile = DEFAULT_OUTPUT
-    
+
     # Parse command line arguments
     parse_options(sys.argv[1:])
-    
+
     # Open input file
     if infile == "-":
         in_file = sys.stdin
@@ -497,39 +497,39 @@ def main():
         except IOError:
             print("Couldn't open input file.", file=sys.stderr)
             sys.exit(1)
-    
+
     filebuf = bytearray()
     linenum = -1
     passnum = 1
-    
+
     # Main processing loop
     while True:
         if use_labels:
             linenum = autostart - autoincr
         textlinenum = 0
-        
+
         if passnum > 1:
             if infile == "-":
                 print("Need seekable input for label support", file=sys.stderr)
                 sys.exit(1)
             in_file.seek(0)
-        
+
         while True:
             line = in_file.readline()
             if not line:
                 break
-            
+
             textlinenum += 1
             lastline = linenum
-            
+
             # Remove newline
             if line.endswith('\n'):
                 line = line[:-1]
-            
+
             # Allow shell-style comments and ignore blank lines
             if not line or line[0] == '#':
                 continue
-            
+
             # Handle line continuation
             while line.endswith('\\'):
                 cont_line = in_file.readline()
@@ -540,11 +540,11 @@ def main():
                 if cont_line.endswith('\n'):
                     cont_line = cont_line[:-1]
                 line = line[:-1] + cont_line
-            
+
             if len(line) >= BUF_SIZE - MAX_LABEL_LEN - 1:
                 print(f"line {textlinenum}: line too big for input buffer", file=sys.stderr)
                 sys.exit(1)
-            
+
             # Get line number (or assign one)
             if use_labels:
                 linestart_idx = 0
@@ -560,31 +560,31 @@ def main():
                 if linestart_idx >= len(line) or not line[linestart_idx].isdigit():
                     print(f"line {textlinenum}: missing line number", file=sys.stderr)
                     sys.exit(1)
-                
+
                 # Parse line number - strtol sets linestart to point AFTER the number
                 end_idx = linestart_idx
                 while end_idx < len(line) and line[end_idx].isdigit():
                     end_idx += 1
                 linenum = int(line[linestart_idx:end_idx])
                 linestart_idx = end_idx  # Point to character after line number
-                
+
                 if linenum <= lastline:
                     print(f"line {textlinenum}: line no. not greater than previous one", file=sys.stderr)
                     sys.exit(1)
-            
+
             if linenum < 0 or linenum > 9999:
                 print(f"line {textlinenum}: line no. out of range", file=sys.stderr)
                 sys.exit(1)
-            
+
             # Skip remaining spaces after line number
             while linestart_idx < len(line) and line[linestart_idx].isspace():
                 linestart_idx += 1
-            
+
             # Check for line numbers in label mode
             if use_labels and linestart_idx < len(line) and line[linestart_idx].isdigit():
                 print(f"line {textlinenum}: line number used in labels mode", file=sys.stderr)
                 sys.exit(1)
-            
+
             # Handle label definition
             if use_labels and linestart_idx < len(line) and line[linestart_idx] == '@':
                 colon_idx = line.find(':', linestart_idx)
@@ -606,11 +606,11 @@ def main():
                         if labels[f] == label_name:
                             print(f"line {textlinenum}: attempt to redefine label", file=sys.stderr)
                             sys.exit(1)
-                    
+
                     linestart_idx = colon_idx + 1
                     while linestart_idx < len(line) and line[linestart_idx].isspace():
                         linestart_idx += 1
-                    
+
                     # If now blank, don't insert an actual line
                     if linestart_idx >= len(line) or not line[linestart_idx]:
                         linenum -= autoincr
@@ -622,14 +622,14 @@ def main():
                     if linestart_idx >= len(line) or not line[linestart_idx]:
                         linenum -= autoincr
                         continue
-            
+
             if use_labels and passnum == 1:
                 continue
-            
+
             # Extract line content and convert to bytearray
             linestart_str = line[linestart_idx:]
             linestart = bytearray(linestart_str.encode('latin-1'))
-            
+
             # Make token comparison copy (lowercase, blanked-out strings)
             lcasebuf = bytearray()
             in_quotes = False
@@ -640,7 +640,7 @@ def main():
                     lcasebuf.append(32)  # space
                 else:
                     lcasebuf.append(ord(chr(c).lower()))
-            
+
             # Find REM statement
             remptr_idx = None
             rem_str = b"rem"
@@ -669,7 +669,26 @@ def main():
                         lcasebuf[pos + 3] = 1
                     break
                 pos += 1
-            
+
+            # Mark %extension command text so built-in BASIC keyword tokenization
+            # does not rewrite commands like %close into "% CLOSE".
+            percent_mask = bytearray(len(lcasebuf))
+            in_percent_command_scan = False
+            for idx, ch in enumerate(lcasebuf):
+                if remptr_idx is not None and idx >= remptr_idx:
+                    break
+                if ch == ord('"'):
+                    in_percent_command_scan = False
+                    continue
+                if ch == ord('%'):
+                    in_percent_command_scan = True
+                    percent_mask[idx] = 1
+                    continue
+                if in_percent_command_scan:
+                    percent_mask[idx] = 1
+                    if ch == ord(':'):
+                        in_percent_command_scan = False
+
             # Tokenize keywords
             # C code iterates through flat array: for (tarrptr = tokens; *tarrptr != NULL; tarrptr++)
             # toknum decrements when alttok is true, BEFORE checking if string is empty
@@ -692,14 +711,14 @@ def main():
                     toknum = VALSTR_TOKEN_NUM
                 elif toknum == VALSTR_TOKEN_NUM:
                     toknum = VAL_TOKEN_NUM
-                
+
                 # Skip empty strings (but toknum already decremented if alttok was true)
                 if not token_str:
                     continue
-                
+
                 toklen = len(token_str)
                 token_bytes = token_str.lower().encode('latin-1')
-                
+
                 # Find all occurrences
                 # C code: strstr stops at null terminator, so REM prevents tokenization after it
                 pos = 0
@@ -713,7 +732,10 @@ def main():
                     # Stop if we've reached REM
                     if remptr_idx is not None and pos >= remptr_idx:
                         break
-                    
+                    if percent_mask[pos]:
+                        pos += toklen
+                        continue
+
                     # Check it's not in the middle of a word (except for <>, <=, >=)
                     # C code: (*tarrptr)[0] == '<' || (*tarrptr)[1] == '=' || (!isalpha(ptr[-1]) && !isalpha(ptr[toklen]))
                     # In C, isalpha() returns 0 for values >= 128, so we need to check < 128 first
@@ -723,7 +745,7 @@ def main():
                     next_is_alpha = False
                     if pos + toklen < len(lcasebuf) and lcasebuf[pos + toklen] < 128:
                         next_is_alpha = chr(lcasebuf[pos + toklen]).isalpha()
-                    
+
                     if token_str[0] == '<' or (len(token_str) > 1 and token_str[1] == '=') or (not prev_is_alpha and not next_is_alpha):
                         # Replace token
                         linestart[pos] = toknum
@@ -732,14 +754,14 @@ def main():
                             if pos + f < len(linestart):
                                 linestart[pos + f] = 1
                                 lcasebuf[pos + f] = 1
-                        
+
                         # Absorb trailing spaces
                         f = toklen
                         while pos + f < len(linestart) and linestart[pos + f] == ord(' '):
                             linestart[pos + f] = 1
                             lcasebuf[pos + f] = 1
                             f += 1
-                        
+
                         # Special handling for BIN token
                         if toknum == BIN_TOKEN_NUM:
                             linestart[pos] = 1
@@ -747,9 +769,9 @@ def main():
                             if pos + f - 1 < len(linestart):
                                 linestart[pos + f - 1] = toknum
                                 lcasebuf[pos + f - 1] = toknum
-                    
+
                     pos += toklen
-            
+
             # Replace labels with line numbers
             if use_labels:
                 ptr = 0
@@ -757,12 +779,12 @@ def main():
                     ptr = linestart.find(ord('@'), ptr)
                     if ptr == -1:
                         break
-                    
+
                     # Check for escape
                     if ptr > 0 and linestart[ptr - 1] == ord('\\'):
                         ptr += 1
                         continue
-                    
+
                     # Try to match label
                     ptr += 1
                     matched = False
@@ -781,43 +803,51 @@ def main():
                                 ptr += len(numbuf)
                                 matched = True
                                 break
-                    
+
                     if not matched:
                         print(f"line {textlinenum}: undefined label", file=sys.stderr)
                         sys.exit(1)
-            
+
             # Restore REM token if needed
             if remptr_idx is not None:
                 linestart[remptr_idx] = REM_TOKEN_NUM
-            
+
             # Process line and build output
             outbuf = bytearray()
             ptr = 0
             in_rem = False
             in_deffn = False
             in_quotes = False
-            
+            in_percent_command = False
+
             while ptr < len(linestart):
                 if len(outbuf) > OUTBUF_SIZE - 10:
                     print(f"line {textlinenum}: line too big", file=sys.stderr)
                     sys.exit(1)
-                
+
                 c = linestart[ptr]
-                
+
                 if c == ord('"'):
                     in_quotes = not in_quotes
-                
-                # Skip 0x01 chars, tabs, and spaces (when not in quotes/rem)
-                if c == 1 or c == 9 or (not in_quotes and not in_rem and c == ord(' ')):
+
+                # Preserve spacing inside %extension commands; elsewhere match the
+                # original behavior of collapsing spaces outside quotes/REM.
+                if c == 1 or c == 9 or (not in_quotes and not in_rem and not in_percent_command and c == ord(' ')):
                     ptr += 1
                     continue
-                
+
                 if c == DEFFN_TOKEN_NUM:
                     in_deffn = True
-                
+
                 if c == REM_TOKEN_NUM:
                     in_rem = True
-                
+
+                if not in_quotes and not in_rem:
+                    if c == ord('%'):
+                        in_percent_command = True
+                    elif c == ord(':'):
+                        in_percent_command = False
+
                 # Handle escape sequences
                 if c == ord('\\') and ptr + 1 < len(linestart):
                     esc_char = chr(linestart[ptr + 1])
@@ -862,12 +892,12 @@ def main():
                             outbuf.append(linestart[ptr + 1])
                     ptr += 2
                     continue
-                
+
                 # Handle numbers
                 if not in_rem and not in_quotes:
                     prev_char = linestart[ptr - 1] if ptr > 0 else ord(' ')
                     prev_is_alpha = chr(prev_char).isalpha() if prev_char < 128 else False
-                    
+
                     # Check if this looks like the start of a number
                     is_num_start = False
                     if chr(c).isdigit():
@@ -876,10 +906,10 @@ def main():
                         next_char = linestart[ptr + 1]
                         if c == ord('.') and chr(next_char).isdigit():
                             is_num_start = True
-                        elif c in (ord('-'), ord('+')) and (chr(next_char).isdigit() or 
-                                                              (chr(next_char) == '.' and ptr + 2 < len(linestart) and chr(linestart[ptr + 2]).isdigit())):
+                        elif c in (ord('-'), ord('+')) and (chr(next_char).isdigit() or
+                                                            (chr(next_char) == '.' and ptr + 2 < len(linestart) and chr(linestart[ptr + 2]).isdigit())):
                             is_num_start = True
-                    
+
                     if is_num_start and not prev_is_alpha and prev_char != BIN_TOKEN_NUM:
                         # Parse number using strtod equivalent
                         # Convert bytearray slice to string for parsing
@@ -895,10 +925,10 @@ def main():
                                 num = float(num_str)
                                 num_end = len(num_str)
                                 ptr2 = ptr + num_end
-                                
+
                                 # Output number text (original bytes)
                                 outbuf.extend(linestart[ptr:ptr2])
-                                
+
                                 # Output inline FP representation
                                 outbuf.append(0x0e)
                                 success, num_exp, num_mantissa = dbl2spec(num)
@@ -921,10 +951,10 @@ def main():
                         num_val, ptr2_str = grok_binary(num_str_bytes, textlinenum)
                         num = float(num_val)
                         ptr2 = ptr + (len(num_str_bytes) - len(ptr2_str))
-                        
+
                         # Output number text
                         outbuf.extend(linestart[ptr:ptr2])
-                        
+
                         # Output inline FP representation
                         outbuf.append(0x0e)
                         success, num_exp, num_mantissa = dbl2spec(num)
@@ -938,7 +968,7 @@ def main():
                         outbuf.append(num_mantissa & 0xFF)
                         ptr = ptr2
                         continue
-                
+
                 # Special DEF FN case
                 if in_deffn:
                     if c == ord('='):
@@ -950,7 +980,7 @@ def main():
                             outbuf.append(c)
                             ptr += 1
                             continue
-                        
+
                         if c != ord(' '):
                             if c == ord('='):
                                 in_deffn = False
@@ -961,28 +991,28 @@ def main():
                     # Normal character output
                     outbuf.append(c)
                     ptr += 1
-            
+
             # Add terminating CR
             outbuf.append(0x0d)
-            
+
             # Check buffer size
             linelen = len(outbuf)
             if len(filebuf) + 4 + linelen > FILEBUF_SIZE:
                 print("program too big!", file=sys.stderr)
                 sys.exit(1)
-            
+
             # Write line to filebuf
             filebuf.extend(struct.pack('>H', linenum))  # line number (big-endian)
             filebuf.extend(struct.pack('<H', linelen))  # line length (little-endian)
             filebuf.extend(outbuf)
-        
+
         passnum += 1
         if not (use_labels and passnum <= 2):
             break
-    
+
     if in_file != sys.stdin:
         in_file.close()
-    
+
     # Check auto-start label
     if startlabel:
         if not use_labels:
@@ -997,7 +1027,7 @@ def main():
         if not found:
             print("Auto-start label is undefined", file=sys.stderr)
             sys.exit(1)
-    
+
     # Write output file
     if outfile == "-":
         out_file = sys.stdout.buffer
@@ -1007,9 +1037,9 @@ def main():
         except IOError:
             print("Couldn't open output file.", file=sys.stderr)
             sys.exit(1)
-    
+
     siz = len(filebuf)
-    
+
     if output_format == OutputFormat.PLUS3DOS:
         # Make header
         headerbuf = bytearray(128)
@@ -1026,11 +1056,11 @@ def main():
         headerbuf[19] = (startline >> 8) & 0xFF
         headerbuf[20] = siz & 0xFF
         headerbuf[21] = (siz >> 8) & 0xFF
-        
+
         chk = sum(headerbuf[:127]) & 0xFF
         out_file.write(headerbuf[:127])
         out_file.write(bytes([chk]))
-    
+
     elif output_format == OutputFormat.TAP:
         # Make header
         headerbuf = bytearray(17)
@@ -1046,7 +1076,7 @@ def main():
         headerbuf[14] = (startline >> 8) & 0xFF
         headerbuf[15] = siz & 0xFF
         headerbuf[16] = (siz >> 8) & 0xFF
-        
+
         # Write header
         chk = 0
         out_file.write(bytes([19, 0, chk]))
@@ -1054,7 +1084,7 @@ def main():
             chk ^= headerbuf[f]
         out_file.write(headerbuf)
         out_file.write(bytes([chk]))
-        
+
         # Write tap bit for data block
         # C code: fprintf(out, "%c%c%c", (siz + 2) & 255, (siz + 2) >> 8, chk = 255);
         # This writes: low_byte, high_byte, 255 (initial checksum)
@@ -1065,16 +1095,16 @@ def main():
         # Now calculate checksum by XORing with filebuf
         for f in range(siz):
             chk ^= filebuf[f]
-    
+
     # Write file data
     out_file.write(filebuf)
-    
+
     if output_format == OutputFormat.TAP:
         out_file.write(bytes([chk]))
-    
+
     if out_file != sys.stdout.buffer:
         out_file.close()
-    
+
     quot_tok_list.free()
     sys.exit(0)
 

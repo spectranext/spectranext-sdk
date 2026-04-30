@@ -32,12 +32,16 @@ target_include_directories(hacker_news PRIVATE
 add_dependencies(hacker_news zxgui)
 
 target_link_libraries(hacker_news PUBLIC
-    -llibspdos -llibterm -llibspectranet_np.lib ${ZXGUI_LIBRARIES}
+    -llibspdos.lib -llibterm -llibspectranet.lib ${ZXGUI_LIBRARIES}
 )
+
+target_compile_definitions(hacker_news PUBLIC
+    -debug)
 
 target_link_options(hacker_news PUBLIC
     -create-app
     -pragma-redirect:fputc_cons=spectranext_fputc_cons
+    -debug -m
 )
 
 spectranext_set_boot("

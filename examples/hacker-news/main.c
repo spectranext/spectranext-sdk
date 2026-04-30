@@ -1,3 +1,4 @@
+#include <spectranet.h>
 #include <spectranext.h>
 #include <stdio.h>
 

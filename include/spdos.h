@@ -15,29 +15,29 @@
 #endif
 
 /* File operations */
-int open(const char *name, int flags, mode_t mode);
-int close(int handle);
-ssize_t read(int handle, void *buf, size_t len);
-ssize_t write(int handle, void *buf, size_t len);
-int readbyte(int fd);
-int writebyte(int handle, int c);
-long lseek(int fd, long posn, int whence);
+int __LIB__ open(const char *name, int flags, mode_t mode);
+int __LIB__ close(int handle);
+ssize_t __LIB__ read(int handle, void *buf, size_t len);
+ssize_t __LIB__ write(int handle, void *buf, size_t len);
+int __LIB__ readbyte(int fd);
+int __LIB__ writebyte(int handle, int c);
+long __LIB__ lseek(int fd, long posn, int whence);
 
 /* Directory operations */
-int mkdir(char *name);
-int rmdir(char *name);
-int chdir(char *name);
-char *getcwd(char *buf, size_t buflen);
+int __LIB__ mkdir(char *name);
+int __LIB__ rmdir(char *name);
+int __LIB__ chdir(char *name);
+char __LIB__ *getcwd(char *buf, size_t buflen);
 
 /* File management */
-int rename(const char *s, const char *d);
-int remove(char *name);
-int unlink(char *name);
+int __LIB__ rename(const char *s, const char *d);
+int __LIB__ remove(char *name);
+int __LIB__ unlink(char *name);
 
 /* Directory reading */
-int opendir(char *name);
-int readdir(int dirhandle, void *buf);
-int closedir(int dirhandle);
+int __LIB__ opendir(char *name);
+int __LIB__ readdir(int dirhandle, void *buf);
+int __LIB__ closedir(int dirhandle);
 
 /* File status */
 /* File mode constants (Spectranet VFS) */
@@ -74,17 +74,16 @@ int closedir(int dirhandle);
  * // Mount with authentication
  * mount(0, "mypassword", "myuser", "/home/tnfs", "remote.domain", "tnfs");
  */
-int mount(int mount_point, char* password, char* user_id, char* path, char* hostname, char *protocol);
-int umount(int mount_point);
+int __LIB__ mount(int mount_point, char* password, char* user_id, char* path, char* hostname, char *protocol);
+int __LIB__ umount(int mount_point);
 
 /* File status */
-int stat(const char *path, struct stat *buf);
+int __LIB__ stat(const char *path, struct stat *buf);
 /* Check if a path is a directory */
-int isdir(const char *path);
+int __LIB__ isdir(const char *path);
 
-
-int setmountpoint(int mount_point);
-int getmountpoint(void);
+int __LIB__ setmountpoint(int mount_point);
+int __LIB__ getmountpoint(void);
 
 #endif /* SPDOS_H */
 

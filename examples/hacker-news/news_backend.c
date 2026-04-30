@@ -19,8 +19,6 @@
 #define NEWS_FIELD_LEN 256u
 #define ARTICLE_PATH_LEN 32u
 
-extern ssize_t read(int fd, void *buf, size_t count);
-
 static uint8_t s_select_buffer[NEWS_SELECT_BUFFER_SIZE];
 struct news_article_details s_article;
 static int s_fd = -1;

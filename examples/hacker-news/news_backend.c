@@ -100,6 +100,8 @@ int news_backend_init(void)
 {
     int rc;
 
+    umount(HTTPS_MOUNT);
+
     printf("[backend] init mount=%d host=api.hnpwa.com path=/v0\n", HTTPS_MOUNT);
     rc = mount(HTTPS_MOUNT, NULL, NULL, "/v0", "api.hnpwa.com", "https");
     if (rc < 0) {

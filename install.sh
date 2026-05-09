@@ -2,7 +2,7 @@
 set -e
 
 # z88dk version to install
-Z88DK_VERSION="2.3"
+Z88DK_VERSION="2.4"
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,8 +11,32 @@ cd "$SCRIPT_DIR"
 # Detect OS
 if [[ "$OSTYPE" == "darwin"* ]]; then
     OS="macos"
-elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    OS="linux"
+elif [[ "$OSTYPE" == "linux"* ]]; then
+    if [ -r /etc/os-release ]; then
+        . /etc/os-release
+        case "${ID:-}" in
+            ubuntu)
+                OS="ubuntu"
+                ;;
+            alpine)
+                OS="alpine"
+                ;;
+            *)
+                case " ${ID_LIKE:-} " in
+                    *" ubuntu "*|*" debian "*)
+                        OS="ubuntu"
+                        ;;
+                    *)
+                        echo "Error: Unsupported Linux distribution: ${ID:-unknown}"
+                        exit 1
+                        ;;
+                esac
+                ;;
+        esac
+    else
+        echo "Error: Cannot detect Linux distribution. /etc/os-release is missing."
+        exit 1
+    fi
 else
     echo "Error: Unsupported OS. This script supports macOS and Linux only."
     exit 1
@@ -47,8 +71,8 @@ else
         # Clean up zip file
         rm -f "$Z88DK_ZIP"
         
-    elif [ "$OS" == "linux" ]; then
-        echo "Installing z88dk for Linux..."
+    elif [ "$OS" == "ubuntu" ]; then
+        echo "Installing z88dk for Ubuntu..."
         
         # Install build dependencies
         echo "Installing build dependencies..."
@@ -97,10 +121,57 @@ else
         echo "Installing z88dk..."
         mkdir -p ../z88dk
         make PREFIX="$(cd .. && pwd)/z88dk" install
-        
+        cp -R lib ../z88dk
+        cp -R include ../z88dk
+        cp -R support ../z88dk
+
         cd ..
         
         # Clean up source and tarball
+        rm -rf z88dk-src
+        rm -f "$Z88DK_TGZ"
+    elif [ "$OS" == "alpine" ]; then
+        echo "Installing z88dk for Alpine Linux..."
+
+        echo "Installing build dependencies..."
+        apk add --no-cache \
+            bash cmake git build-base python3 py3-pip py3-setuptools gmp-dev \
+            libxml2 libxml2-dev m4 perl bison flex ragel perl-utils perl-dev dos2unix re2c \
+            jpeg-dev zlib-dev curl
+
+        # Download z88dk source release
+        Z88DK_URL="https://github.com/z88dk/z88dk/releases/download/v${Z88DK_VERSION}/z88dk-src-${Z88DK_VERSION}.tgz"
+        Z88DK_TGZ="z88dk-src-${Z88DK_VERSION}.tgz"
+
+        if [ ! -f "$Z88DK_TGZ" ]; then
+            echo "Downloading z88dk source..."
+            curl -L -o "$Z88DK_TGZ" "$Z88DK_URL"
+        fi
+
+        echo "Extracting z88dk source..."
+        tar -xzf "$Z88DK_TGZ"
+        if [ -d "z88dk-${Z88DK_VERSION}" ]; then
+            mv "z88dk-${Z88DK_VERSION}" z88dk-src
+        elif [ ! -d "z88dk-src" ]; then
+            if [ -d "z88dk" ] && [ ! -d "z88dk-src" ]; then
+                mv z88dk z88dk-src
+            fi
+        fi
+
+        echo "Building z88dk (this may take a while)..."
+        cd z88dk-src
+        chmod +x build.sh
+        ./build.sh -p zx
+
+        echo "Installing z88dk..."
+        mkdir -p ../z88dk
+        make PREFIX="$(cd .. && pwd)/z88dk" install
+        cp -R lib ../z88dk
+        cp -R include ../z88dk
+        cp -R support ../z88dk
+
+        cd ..
+
         rm -rf z88dk-src
         rm -f "$Z88DK_TGZ"
     fi
@@ -120,11 +191,18 @@ if [ "$OS" == "macos" ]; then
     else
         echo "Python3 already installed"
     fi
-elif [ "$OS" == "linux" ]; then
+elif [ "$OS" == "ubuntu" ]; then
     if ! command -v python3 &> /dev/null; then
         echo "Installing Python via apt..."
         sudo apt-get update
         sudo apt-get install -y python3 python3-pip python3-venv
+    else
+        echo "Python3 already installed"
+    fi
+elif [ "$OS" == "alpine" ]; then
+    if ! command -v python3 &> /dev/null; then
+        echo "Installing Python via apk..."
+        sudo apk add --no-cache python3 py3-pip py3-setuptools
     else
         echo "Python3 already installed"
     fi
@@ -165,4 +243,3 @@ echo ""
 echo "For bash (~/.bashrc):"
 echo "  echo 'source $SCRIPT_DIR/source.sh' >> ~/.bashrc"
 echo ""
-

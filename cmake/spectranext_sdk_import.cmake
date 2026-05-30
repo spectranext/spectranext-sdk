@@ -79,6 +79,7 @@ function(spectranext_sdk_init)
         include_directories("$ENV{SPECTRANEXT_INCLUDE_DIR}")
     endif()
 
+    include_directories("$ENV{SPECTRANEXT_SDK_PATH}/include")
     link_directories("$ENV{SPECTRANEXT_SDK_PATH}/clibs")
     
     # Add z88dk include directory

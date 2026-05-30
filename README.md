@@ -24,7 +24,7 @@ WORKDIR /build
 COPY . .
 
 RUN . /sdk/source.sh && \
-    cmake -B build -DCMAKE_BUILD_TYPE=Release . && \
+    cmake -B build -DCMAKE_BUILD_TYPE=Release -DZCCTARGET=zx -DCMAKE_TOOLCHAIN_FILE=/sdk/z88dk/share/z88dk/cmake/Toolchain-zcc.cmake . && \
     cmake --build build
 ```
 
@@ -44,12 +44,35 @@ ENV PATH="/sdk/bin:/sdk/z88dk/bin:${PATH}"
 RUN apk add --no-cache cmake git build-base
 WORKDIR /build
 COPY . .
-RUN . /sdk/source.sh && cmake -B build -DCMAKE_BUILD_TYPE=Release . && cmake --build build
+RUN . /sdk/source.sh && cmake -B build -DCMAKE_BUILD_TYPE=Release -DZCCTARGET=zx -DCMAKE_TOOLCHAIN_FILE=/sdk/z88dk/share/z88dk/cmake/Toolchain-zcc.cmake . && cmake --build build
 ```
 
 The first stage can be any `spectranext/sdk-*` image; the second stage is your distro and tooling. Copy `/sdk` and set `SPECTRANEXT_SDK_PATH` wherever you compile.
 
-### macOS / Linux
+### macOS
+
+Install from the Spectranext Homebrew tap:
+
+```bash
+brew tap spectranext/homebrew-spectranext
+brew install spectranext-sdk
+```
+
+Load the SDK environment in your shell:
+
+```bash
+source "$(brew --prefix spectranext-sdk)/libexec/source.sh"
+```
+
+Or add it to your shell configuration:
+
+```bash
+echo 'source "$(brew --prefix spectranext-sdk)/libexec/source.sh"' >> ~/.zshrc
+```
+
+The Homebrew package installs z88dk, the Spectranext SDK headers and libraries, CMake integration, and the SPX tools.
+
+### Linux
 
 Run the installation script to set up z88dk and Python dependencies:
 
@@ -281,4 +304,3 @@ You can read on xfs tools a little bit more here: https://docs.spectranext.net/d
 **Note:** On Windows, use `spx.bat ls`, `spx.bat get`, etc. instead of `spx-ls`, `spx-get`, etc.
 
 Run `spx-help` for a list of available commands (or `spx.bat help` on Windows).
-

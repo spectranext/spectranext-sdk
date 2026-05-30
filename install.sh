@@ -115,7 +115,7 @@ else
         echo "Building z88dk (this may take a while)..."
         cd z88dk-src
         chmod +x build.sh
-        ./build.sh -p zx
+        ./build.sh -p zx -z
         
         # Install to z88dk folder
         echo "Installing z88dk..."
@@ -161,7 +161,7 @@ else
         echo "Building z88dk (this may take a while)..."
         cd z88dk-src
         chmod +x build.sh
-        ./build.sh -p zx
+        ./build.sh -p zx -z
 
         echo "Installing z88dk..."
         mkdir -p ../z88dk

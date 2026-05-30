@@ -1,15 +1,22 @@
 IMAGE_ALPINE ?= spectranext/sdk-alpine
 IMAGE_UBUNTU ?= spectranext/sdk-ubuntu
 TAG ?= latest
+SDK_VERSION ?= 0.1.0
 CONTEXT ?= .
 DOCKERFILE_ALPINE ?= Dockerfile.alpine
 DOCKERFILE_UBUNTU ?= Dockerfile.ubuntu
 PLATFORMS ?= linux/amd64,linux/arm64
+PYTHON ?= python3
+DIST_DIR ?= dist
+HOMEBREW_ARCH ?= $(shell uname -m | sed 's/arm64/arm64/;s/x86_64/x86_64/')
+HOMEBREW_PACKAGE := spectranext-sdk-$(SDK_VERSION)-macos-$(HOMEBREW_ARCH)
+HOMEBREW_TARBALL := $(DIST_DIR)/$(HOMEBREW_PACKAGE).tar.gz
 # Multi-platform builds need the docker-container driver (not default "docker" on Docker Desktop).
 BUILDX_BUILDER ?= spectranext-multiarch
 BUILDX := docker buildx build --builder $(BUILDX_BUILDER)
 
 .PHONY: help setup-buildx \
+	homebrew-tarball \
 	build build-alpine build-ubuntu \
 	build-alpine-amd64 build-alpine-arm64 build-ubuntu-amd64 build-ubuntu-arm64 \
 	build-all build-all-amd64 build-all-arm64 build-all-multi \
@@ -39,10 +46,26 @@ help:
 		'  push-alpine-arm64  Push alpine linux/arm64 only' \
 		'  push-ubuntu-amd64  Push ubuntu linux/amd64 only' \
 		'  push-ubuntu-arm64  Push ubuntu linux/arm64 only' \
+		'  homebrew-tarball   Build macOS Homebrew release tarball with vendored wheels' \
 		'' \
 		'Variables:' \
 		'  IMAGE_ALPINE=spectranext/sdk-alpine IMAGE_UBUNTU=spectranext/sdk-ubuntu' \
-		'  TAG=latest PLATFORMS=linux/amd64,linux/arm64 BUILDX_BUILDER=spectranext-multiarch'
+		'  TAG=latest PLATFORMS=linux/amd64,linux/arm64 BUILDX_BUILDER=spectranext-multiarch' \
+		'  SDK_VERSION=0.1.0 HOMEBREW_ARCH=arm64|x86_64 DIST_DIR=dist PYTHON=python3'
+
+homebrew-tarball:
+	rm -rf "$(DIST_DIR)/$(HOMEBREW_PACKAGE)"
+	mkdir -p "$(DIST_DIR)/$(HOMEBREW_PACKAGE)/vendor/wheels"
+	cp -R README.md requirements.txt source.sh source.ps1 install.sh install.ps1 install.bat "$(DIST_DIR)/$(HOMEBREW_PACKAGE)/"
+	cp -R bin clibs cmake include "$(DIST_DIR)/$(HOMEBREW_PACKAGE)/"
+	@if [ -d man ]; then cp -R man "$(DIST_DIR)/$(HOMEBREW_PACKAGE)/"; fi
+	$(PYTHON) -m pip download --dest "$(DIST_DIR)/$(HOMEBREW_PACKAGE)/vendor/wheels" -r requirements.txt
+	find "$(DIST_DIR)/$(HOMEBREW_PACKAGE)" -name '.DS_Store' -delete
+	find "$(DIST_DIR)/$(HOMEBREW_PACKAGE)" -name '__pycache__' -type d -prune -exec rm -rf {} +
+	tar -czf "$(HOMEBREW_TARBALL)" -C "$(DIST_DIR)" "$(HOMEBREW_PACKAGE)"
+	shasum -a 256 "$(HOMEBREW_TARBALL)" > "$(HOMEBREW_TARBALL).sha256"
+	@printf '%s\n' "Built $(HOMEBREW_TARBALL)"
+	@cat "$(HOMEBREW_TARBALL).sha256"
 
 setup-buildx:
 	@if ! docker buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1; then \

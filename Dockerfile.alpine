@@ -1,0 +1,12 @@
+FROM alpine:3.23.4
+
+# Build deps (install.sh adds more at runtime; pre-install for layer caching)
+RUN apk update && apk add --no-cache \
+    bash sudo cmake git build-base python3 py3-pip py3-setuptools gmp-dev \
+    libxml2 libxml2-dev m4 perl perl-utils perl-dev bison flex ragel \
+    dos2unix re2c jpeg-dev zlib-dev curl && \
+    cpan install Modern::Perl YAML::Tiny CPU::Z80::Assembler
+
+WORKDIR /sdk
+COPY . /sdk
+RUN ./install.sh

@@ -4,6 +4,51 @@ SDK for developing applications for the [Spectranext cartridge](https://spectran
 
 ## Installation
 
+### Docker
+
+Pre-built images include the full SDK (z88dk, Python venv, SPX tools) at `/sdk`. Use one as the base image in your project `Dockerfile` instead of running `install.sh` yourself.
+
+https://hub.docker.com/u/spectranext
+
+| Image                           | Base OS | Architecture |
+|---------------------------------|---------|--------------|
+| `spectranext/sdk-alpine:latest` | Alpine Linux | amd64 + arm64 |
+| `spectranext/sdk-ubuntu:latest` | Ubuntu 24.04 | amd64 + arm64 |
+
+Example `Dockerfile` of your project
+
+```dockerfile
+FROM spectranext/sdk-alpine:latest
+
+WORKDIR /build
+COPY . .
+
+RUN . /sdk/source.sh && \
+    cmake -B build -DCMAKE_BUILD_TYPE=Release . && \
+    cmake --build build
+```
+
+For Ubuntu-based projects, use `FROM spectranext/sdk-ubuntu:latest` instead. Source `/sdk/source.sh` (or set `SPECTRANEXT_SDK_PATH=/sdk`) before building—the same as on the host.
+
+**Need another base image, extra packages, or a smaller runtime?** Use a multi-stage build: build in the SDK image (or copy the SDK into your own stage), then keep only what you need in the final image:
+
+```dockerfile
+FROM spectranext/sdk-alpine:latest AS sdk
+
+FROM alpine:3.23.4
+COPY --from=sdk /sdk /sdk
+ENV SPECTRANEXT_SDK_PATH=/sdk
+ENV PATH="/sdk/bin:/sdk/z88dk/bin:${PATH}"
+
+# Your project deps and sources
+RUN apk add --no-cache cmake git build-base
+WORKDIR /build
+COPY . .
+RUN . /sdk/source.sh && cmake -B build -DCMAKE_BUILD_TYPE=Release . && cmake --build build
+```
+
+The first stage can be any `spectranext/sdk-*` image; the second stage is your distro and tooling. Copy `/sdk` and set `SPECTRANEXT_SDK_PATH` wherever you compile.
+
 ### macOS / Linux
 
 Run the installation script to set up z88dk and Python dependencies:

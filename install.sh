@@ -79,7 +79,7 @@ else
         sudo apt-get update
         sudo apt-get install -y \
             cmake git build-essential python3 python3-pip python3-venv \
-            perl libxml2-dev m4 bison flex ragel dos2unix re2c \
+            perl pkg-config libxml2-dev m4 bison flex ragel dos2unix re2c \
             libjpeg-dev zlib1g-dev libgmp-dev \
             cpanminus
         

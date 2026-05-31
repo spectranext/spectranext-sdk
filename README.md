@@ -2,6 +2,10 @@
 
 SDK for developing applications for the [Spectranext cartridge](https://spectranext.net) (and for original Spectranet).
 
+## Example Programs
+
+See example programs on [spectranext-examples](https://github.com/spectranext/spectranext-examples) repository.
+
 ## Installation
 
 ### Docker
@@ -181,7 +185,7 @@ add_executable(idetest main.c)
 
 target_compile_options(idetest PUBLIC -debug)
 
-target_link_libraries(idetest PUBLIC -lndos -llibspectranet.lib -llibsocket.lib)
+target_link_libraries(idetest PUBLIC -lndos -llibspectranet -llibsocket)
 
 target_link_options(idetest PUBLIC -debug -create-app)
 
@@ -266,7 +270,7 @@ cmake --build build --target idetest_bin_autoboot
 ## SDK Components
 
 - **z88dk** - Z80 cross-compiler toolchain
-- **SPX Tools** - Command-line tools for interacting with Spectranext (`spx-ls`, `spx-get`, `spx-put`, etc.)
+- **SPX Tools** - Command-line tools for interacting with Spectranext (`spx ls`, `spx get`, `spx put`, etc.)
 - **CMake Integration** - Automatic toolchain setup and convenience targets
 - **Headers** - Spectranext API headers in `include/`
 - **Libraries** - Pre-built libraries in `clibs/`
@@ -276,7 +280,6 @@ cmake --build build --target idetest_bin_autoboot
 The SDK sets the following environment variables:
 
 - `SPECTRANEXT_SDK_PATH` - Path to the SDK root directory
-- `SPECTRANEXT_TOOLCHAIN` - Path to the CMake toolchain file
 - `SPECTRANEXT_INCLUDE_DIR` - Path to SDK include directory
 - `ZCCTARGET` - z88dk target (default: `zx`)
 - `ZCCCFG` - z88dk configuration path
@@ -289,18 +292,3 @@ The SDK provides command-line tools for interacting with Spectranext:
 ### Spectranext filesystem tools
 
 You can read on xfs tools a little bit more here: https://docs.spectranext.net/development/syncing-with-computer
-
-- `spx-ls [path]` - List contents of RAMFS on Spectranext cartridge
-- `spx-get <remote> <local>` - Download file from device
-- `spx-put <local> <remote>` - Upload file to device
-- `spx-mv <old> <new>` - Move/rename file
-- `spx-rm <path>` - Delete file
-- `spx-mkdir <path>` - Create directory
-- `spx-rmdir <path>` - Remove directory
-- `spx-reboot` - Trigger ZX Spectrum reboot
-- `spx-autoboot` - Configure autoboot from xfs://ram/ and reboot
-- `spx-terminal` - Show terminal connection info (macOS/Linux: launches minicom; Windows: shows connection settings)
-
-**Note:** On Windows, use `spx.bat ls`, `spx.bat get`, etc. instead of `spx-ls`, `spx-get`, etc.
-
-Run `spx-help` for a list of available commands (or `spx.bat help` on Windows).

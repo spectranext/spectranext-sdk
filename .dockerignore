@@ -9,3 +9,4 @@ z88dk-src
 **/cmake-build-*
 **/.ninja_log
 **/.ticks_history.txt
+dist/

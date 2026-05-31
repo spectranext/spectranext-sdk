@@ -1,8 +1,13 @@
 #!/bin/bash
 set -e
 
-# z88dk version to install
-Z88DK_VERSION="2.4"
+# z88dk nightly build to install.
+# Keep this aligned with the Homebrew tap resource.
+Z88DK_NIGHTLY_DATE="20260530"
+Z88DK_NIGHTLY_COMMIT="a996c99f3d"
+Z88DK_NIGHTLY_REVISION="24825"
+Z88DK_NIGHTLY_ID="${Z88DK_NIGHTLY_DATE}-${Z88DK_NIGHTLY_COMMIT}-${Z88DK_NIGHTLY_REVISION}"
+Z88DK_BASE_URL="http://nightly.z88dk.org"
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,9 +56,9 @@ else
     if [ "$OS" == "macos" ]; then
         echo "Installing z88dk for macOS..."
         
-        # Download z88dk binary release
-        Z88DK_URL="https://github.com/z88dk/z88dk/releases/download/v${Z88DK_VERSION}/z88dk-osx-${Z88DK_VERSION}.zip"
-        Z88DK_ZIP="z88dk-osx-${Z88DK_VERSION}.zip"
+        # Download pinned z88dk nightly binary release
+        Z88DK_URL="${Z88DK_BASE_URL}/z88dk-osx-${Z88DK_NIGHTLY_ID}.zip"
+        Z88DK_ZIP="z88dk-osx-${Z88DK_NIGHTLY_ID}.zip"
         
         if [ ! -f "$Z88DK_ZIP" ]; then
             echo "Downloading z88dk..."
@@ -64,8 +69,8 @@ else
         echo "Extracting z88dk..."
         unzip -q -o "$Z88DK_ZIP" -d .
         # The zip might extract to a subdirectory, move contents if needed
-        if [ -d "z88dk-osx-${Z88DK_VERSION}" ]; then
-            mv "z88dk-osx-${Z88DK_VERSION}" z88dk
+        if [ -d "z88dk-osx-${Z88DK_NIGHTLY_ID}" ]; then
+            mv "z88dk-osx-${Z88DK_NIGHTLY_ID}" z88dk
         fi
         
         # Clean up zip file
@@ -89,9 +94,9 @@ else
             echo "Warning: Some Perl modules may have failed to install, continuing..."
         }
         
-        # Download z88dk source release
-        Z88DK_URL="https://github.com/z88dk/z88dk/releases/download/v${Z88DK_VERSION}/z88dk-src-${Z88DK_VERSION}.tgz"
-        Z88DK_TGZ="z88dk-src-${Z88DK_VERSION}.tgz"
+        # Download pinned z88dk nightly source release
+        Z88DK_URL="${Z88DK_BASE_URL}/z88dk-${Z88DK_NIGHTLY_ID}.tgz"
+        Z88DK_TGZ="z88dk-${Z88DK_NIGHTLY_ID}.tgz"
         
         if [ ! -f "$Z88DK_TGZ" ]; then
             echo "Downloading z88dk source..."
@@ -102,8 +107,8 @@ else
         echo "Extracting z88dk source..."
         tar -xzf "$Z88DK_TGZ"
         # The tarball might extract to a subdirectory, move contents if needed
-        if [ -d "z88dk-${Z88DK_VERSION}" ]; then
-            mv "z88dk-${Z88DK_VERSION}" z88dk-src
+        if [ -d "z88dk-${Z88DK_NIGHTLY_ID}" ]; then
+            mv "z88dk-${Z88DK_NIGHTLY_ID}" z88dk-src
         elif [ ! -d "z88dk-src" ]; then
             # If it extracted to current directory, rename it
             if [ -d "z88dk" ] && [ ! -d "z88dk-src" ]; then
@@ -111,11 +116,11 @@ else
             fi
         fi
         
-        # Build z88dk
-        echo "Building z88dk (this may take a while)..."
+        # Build host tools only. Nightly source archives already include target libraries.
+        echo "Building z88dk host tools..."
         cd z88dk-src
         chmod +x build.sh
-        ./build.sh -p zx -z
+        ./build.sh -l
         
         # Install to z88dk folder
         echo "Installing z88dk..."
@@ -139,9 +144,9 @@ else
             libxml2 libxml2-dev m4 perl bison flex ragel perl-utils perl-dev dos2unix re2c \
             jpeg-dev zlib-dev curl
 
-        # Download z88dk source release
-        Z88DK_URL="https://github.com/z88dk/z88dk/releases/download/v${Z88DK_VERSION}/z88dk-src-${Z88DK_VERSION}.tgz"
-        Z88DK_TGZ="z88dk-src-${Z88DK_VERSION}.tgz"
+        # Download pinned z88dk nightly source release
+        Z88DK_URL="${Z88DK_BASE_URL}/z88dk-${Z88DK_NIGHTLY_ID}.tgz"
+        Z88DK_TGZ="z88dk-${Z88DK_NIGHTLY_ID}.tgz"
 
         if [ ! -f "$Z88DK_TGZ" ]; then
             echo "Downloading z88dk source..."
@@ -150,18 +155,18 @@ else
 
         echo "Extracting z88dk source..."
         tar -xzf "$Z88DK_TGZ"
-        if [ -d "z88dk-${Z88DK_VERSION}" ]; then
-            mv "z88dk-${Z88DK_VERSION}" z88dk-src
+        if [ -d "z88dk-${Z88DK_NIGHTLY_ID}" ]; then
+            mv "z88dk-${Z88DK_NIGHTLY_ID}" z88dk-src
         elif [ ! -d "z88dk-src" ]; then
             if [ -d "z88dk" ] && [ ! -d "z88dk-src" ]; then
                 mv z88dk z88dk-src
             fi
         fi
 
-        echo "Building z88dk (this may take a while)..."
+        echo "Building z88dk host tools..."
         cd z88dk-src
         chmod +x build.sh
-        ./build.sh -p zx -z
+        ./build.sh -l
 
         echo "Installing z88dk..."
         mkdir -p ../z88dk

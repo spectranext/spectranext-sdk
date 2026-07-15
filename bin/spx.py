@@ -1090,6 +1090,19 @@ class SPXConnection:
         
         if response != "F0":
             raise RSPIOError(f"Unexpected response: {response}")
+
+    def _vfile_commit(self, path: str) -> None:
+        """Commit file or directory to flash via vFile:commit"""
+        hex_path = self._encode_path(path)
+        packet = f"vFile:commit:{hex_path}"
+        response = self._send_packet_with_response(packet)
+
+        if response.startswith("F-1,"):
+            errno = self._parse_errno(response)
+            self._raise_error(errno, f"Failed to commit {path}")
+
+        if response != "F0":
+            raise RSPIOError(f"Unexpected response: {response}")
     
     # vSpectranext operations
     def _vspectranext_reboot(self) -> None:
@@ -1117,7 +1130,7 @@ class SPXConnection:
         if response != "OK":
             raise RSPIOError(f"Unexpected response: {response}")
     
-    def _vspectranext_readdir(self) -> Optional[Tuple[str, str, int]]:
+    def _vspectranext_readdir(self) -> Optional[Tuple[str, str, int, int]]:
         """Read directory entry via vSpectranext:readdir"""
         response = self._send_packet_with_response("vSpectranext:readdir")
         
@@ -1128,19 +1141,21 @@ class SPXConnection:
             errno = self._parse_errno(response)
             self._raise_error(errno, "Failed to read directory")
         
-        # Parse OK,<hex-name>,<type>,<size>
+        # Parse OK,<hex-name>,<type>,<size>,<storage>
         if not response.startswith("FOK,"):
             raise RSPIOError(f"Unexpected response: {response}")
         
         parts = response[4:].split(',')
-        if len(parts) != 3:
+        if len(parts) not in (3, 4):
             raise RSPIOError(f"Unexpected response format: {response}")
         
-        hex_name, entry_type, size_hex = parts
+        hex_name, entry_type, size_hex = parts[:3]
+        storage_hex = parts[3] if len(parts) == 4 else "0"
         name = self._decode_path(hex_name)
         size = int(size_hex, 16)
+        storage = int(storage_hex, 16)
         
-        return (name, entry_type, size)
+        return (name, entry_type, size, storage)
     
     def _vspectranext_closedir(self) -> None:
         """Close directory via vSpectranext:closedir"""
@@ -1194,7 +1209,7 @@ class SPXConnection:
             raise RSPIOError(f"Unexpected response: {response}")
     
     # High-level API
-    def ls(self, path: str = "/") -> List[Tuple[str, str, int]]:
+    def ls(self, path: str = "/") -> List[Tuple[str, str, int, int]]:
         """
         List directory contents.
         
@@ -1202,7 +1217,8 @@ class SPXConnection:
             path: Directory path (default: "/")
             
         Returns:
-            List of tuples: (type, name, size) where type is 'D' or 'F'
+            List of tuples: (type, name, size, storage) where type is 'D' or 'F',
+            and storage is 0 for RAM or 1 for flash.
         """
         self._vspectranext_opendir(path)
         entries = []
@@ -1211,8 +1227,8 @@ class SPXConnection:
                 entry = self._vspectranext_readdir()
                 if entry is None:
                     break
-                name, entry_type, size = entry
-                entries.append((entry_type, name, size))
+                name, entry_type, size, storage = entry
+                entries.append((entry_type, name, size, storage))
         finally:
             self._vspectranext_closedir()
         
@@ -1333,6 +1349,15 @@ class SPXConnection:
             path: File path
         """
         self._vfile_unlink(path)
+
+    def commit(self, path: str):
+        """
+        Commit file or directory to flash.
+
+        Args:
+            path: File or directory path
+        """
+        self._vfile_commit(path)
     
     def mv(self, old_path: str, new_path: str):
         """
@@ -1508,11 +1533,12 @@ def cmd_ls(args, show_progress: bool = True, verbose: bool = False):
     conn = SPXConnection(args.port, show_progress=show_progress, verbose=verbose)
     try:
         entries = conn.ls(args.path)
-        for entry_type, name, size in entries:
+        for entry_type, name, size, storage in entries:
+            storage_name = "committed" if storage == 1 else "ram"
             if entry_type == 'D':
-                print(f"d {name:30s} {size:10d}")
+                print(f"d {name:30s} {size:10d} {storage_name}")
             else:
-                print(f"f {name:30s} {size:10d}")
+                print(f"f {name:30s} {size:10d} {storage_name}")
     finally:
         conn.close()
 
@@ -1545,6 +1571,16 @@ def cmd_rm(args, show_progress: bool = True, verbose: bool = False):
     try:
         conn.rm(args.path)
         print(f"Deleted {args.path}")
+    finally:
+        conn.close()
+
+
+def cmd_commit(args, show_progress: bool = True, verbose: bool = False):
+    """Commit file or directory to flash"""
+    conn = SPXConnection(args.port, show_progress=show_progress, verbose=verbose)
+    try:
+        conn.commit(args.path)
+        print(f"Committed {args.path} to flash")
     finally:
         conn.close()
 
@@ -1799,6 +1835,10 @@ def main():
     # RM command
     parser_rm = subparsers.add_parser('rm', help='Delete file')
     parser_rm.add_argument('path', help='File path')
+
+    # COMMIT command
+    parser_commit = subparsers.add_parser('commit', help='Commit file or directory to flash')
+    parser_commit.add_argument('path', help='File or directory path')
     
     # MV command
     parser_mv = subparsers.add_parser('mv', help='Move/rename file')
@@ -1846,6 +1886,8 @@ def main():
             cmd_put(args, show_progress, verbose)
         elif args.command == 'rm':
             cmd_rm(args, show_progress, verbose)
+        elif args.command == 'commit':
+            cmd_commit(args, show_progress, verbose)
         elif args.command == 'mv':
             cmd_mv(args, show_progress, verbose)
         elif args.command == 'mkdir':

@@ -58,8 +58,8 @@ int __LIB__ closedir(int dirhandle);
  * @param mount_point Mount point number (0-3)
  * @param password Password string (can be NULL for anonymous access)
  * @param user_id User ID string (can be NULL for anonymous access)
- * @param path Mount source path (e.g., "/home/tnfs" or "ram")
- * @param hostname Hostname or server address (e.g., "remote.domain" or NULL)
+ * @param path Mount source path (e.g., "/home/tnfs", "/test/https", or "" for XFS RAM)
+ * @param hostname Hostname or server address (e.g., "remote.domain" or "ram" for XFS RAM)
  * @param protocol Protocol name (e.g., "tnfs", "xfs", "https")
  * 
  * @return 0 on success, -1 on error
@@ -69,7 +69,7 @@ int __LIB__ closedir(int dirhandle);
  * mount(0, NULL, NULL, "/home/tnfs", "remote.domain", "tnfs");
  * 
  * // Mount XFS RAM filesystem
- * mount(0, NULL, NULL, "ram", NULL, "xfs");
+ * mount(0, NULL, NULL, "", "ram", "xfs");
  * 
  * // Mount with authentication
  * mount(0, "mypassword", "myuser", "/home/tnfs", "remote.domain", "tnfs");
@@ -86,4 +86,3 @@ int __LIB__ setmountpoint(int mount_point);
 int __LIB__ getmountpoint(void);
 
 #endif /* SPDOS_H */
-

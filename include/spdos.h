@@ -13,6 +13,11 @@
 #ifdef rmdir
 #undef rmdir
 #endif
+#ifdef chmod
+#undef chmod
+#endif
+
+#define SPDOS_CHMOD_COMMIT_FLASH 0x8000
 
 /* File operations */
 int __LIB__ open(const char *name, int flags, mode_t mode);
@@ -33,6 +38,8 @@ char __LIB__ *getcwd(char *buf, size_t buflen);
 int __LIB__ rename(const char *s, const char *d);
 int __LIB__ remove(char *name);
 int __LIB__ unlink(char *name);
+int __LIB__ chmod(const char *path, mode_t mode);
+int __LIB__ fscommit(const char *path);
 
 /* Directory reading */
 int __LIB__ opendir(char *name);

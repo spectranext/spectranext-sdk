@@ -6,6 +6,24 @@
 #define SPECTRANEXT_STATUS_IN_PROGRESS (0xFFu)
 #define SPECTRANEXT_STATUS_SUCCESS (0u)
 #define SPECTRANEXT_STATUS_ERROR (1u)
+#define SPECTRANEXT_XFS_READ_PATH_MAX (128u)
+
+#if defined(__SPECTRUM__)
+#define SPECTRANEXT_PACKED
+#else
+#define SPECTRANEXT_PACKED __attribute__((packed))
+#endif
+
+typedef struct SPECTRANEXT_PACKED spectranext_xfs_read_request_s
+{
+    char source_filename[SPECTRANEXT_XFS_READ_PATH_MAX];
+    uint32_t source_offset;
+    uint8_t target_first_page;
+    uint16_t target_first_page_offset;
+    uint32_t maximum_data;
+} spectranext_xfs_read_request_t;
+
+#undef SPECTRANEXT_PACKED
 
 enum spectranext_cmd_t
 {
@@ -16,7 +34,8 @@ enum spectranext_cmd_t
     SPECTRANEXT_CMD_WIFI_DISCONNECT = 4,
     SPECTRANEXT_CMD_DNS_GETHOSTBYNAME = 5,
     SPECTRANEXT_CMD_ENGINECALL = 6,
-    SPECTRANEXT_CMD_GET_MESSAGE = 7
+    SPECTRANEXT_CMD_GET_MESSAGE = 7,
+    SPECTRANEXT_CMD_XFS_READ = 8
 };
 
 #define WIFI_CONTROLLER_STATUS_OFFLINE (0u)
@@ -60,6 +79,11 @@ extern int8_t __LIB__ spectranext_gethostbyname(const char *hostname, uint32_t *
  * On success returns 0; on failure a negative engine error code.
  */
 extern int8_t __LIB__ spectranext_enginecall(const char *input, const char *output, const char *operation) __z88dk_callee;
+/**
+ * Read an XFS file range into controller RAM according to `request`.
+ * Returns the actual number of bytes read, or -1 on controller/XFS failure.
+ */
+extern int32_t __LIB__ __FASTCALL__ spectranext_xfs_read(const spectranext_xfs_read_request_t *request);
 #endif
 
 #endif

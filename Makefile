@@ -18,6 +18,7 @@ BUILDX := docker buildx build --builder $(BUILDX_BUILDER)
 .PHONY: help setup-buildx \
 	homebrew-tarball \
 	build build-alpine build-ubuntu \
+	build-libraries \
 	build-alpine-amd64 build-alpine-arm64 build-ubuntu-amd64 build-ubuntu-arm64 \
 	build-all build-all-amd64 build-all-arm64 build-all-multi \
 	push push-alpine push-ubuntu push-all \
@@ -29,6 +30,7 @@ help:
 		'  build              Build alpine + ubuntu for the current Docker platform' \
 		'  build-alpine       Build alpine image locally' \
 		'  build-ubuntu       Build ubuntu image locally' \
+		'  build-libraries    Rebuild SDK libraries and headers with the Alpine image' \
 		'  build-alpine-amd64 Build and load alpine linux/amd64' \
 		'  build-alpine-arm64 Build and load alpine linux/arm64' \
 		'  build-ubuntu-amd64 Build and load ubuntu linux/amd64' \
@@ -82,6 +84,24 @@ build-alpine:
 
 build-ubuntu:
 	docker build -f $(DOCKERFILE_UBUNTU) -t $(IMAGE_UBUNTU):$(TAG) $(CONTEXT)
+
+build-libraries: build-alpine
+	docker run --rm -v "$(CURDIR):/output" $(IMAGE_ALPINE):$(TAG) bash -ec '\
+		source /sdk/source.sh; \
+		SDK_ZCCCFG="$$ZCCCFG"; \
+		mkdir -p /tmp/spectranext-libraries/lib/config /tmp/spectranext-libraries/lib/clibs /tmp/spectranext-libraries/include; \
+		cp -R "$$SDK_ZCCCFG"/. /tmp/spectranext-libraries/lib/config/; \
+		cp /sdk/include/spectranet.inc /sdk/include/errno.inc /tmp/spectranext-libraries/include/; \
+		cp -R /sdk/libraries /tmp/spectranext-libraries/source; \
+		make -C /tmp/spectranext-libraries/source/libspectranet; \
+		make -C /tmp/spectranext-libraries/source/socklib; \
+		make -C /tmp/spectranext-libraries/source/libhttp CFLAGS="+zx -I./include -I../socklib/include -O2 -vn"; \
+		make -C /tmp/spectranext-libraries/source/libspdos; \
+		make -C /tmp/spectranext-libraries/source/libterm; \
+		ZCCCFG=/tmp/spectranext-libraries/lib/config make -C /tmp/spectranext-libraries/source install; \
+		mkdir -p /output/clibs /output/include; \
+		cp /tmp/spectranext-libraries/lib/clibs/*.lib /output/clibs/; \
+		cp -R /tmp/spectranext-libraries/include/. /output/include/'
 
 build-alpine-amd64:
 	docker buildx build --platform linux/amd64 -f $(DOCKERFILE_ALPINE) -t $(IMAGE_ALPINE):$(TAG)-amd64 --load $(CONTEXT)

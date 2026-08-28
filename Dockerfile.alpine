@@ -1,4 +1,4 @@
-FROM alpine:3.23.4
+FROM alpine:3.23.4 AS toolchain
 
 # Build deps (install.sh adds more at runtime; pre-install for layer caching)
 RUN apk update && apk add --no-cache \
@@ -8,5 +8,13 @@ RUN apk update && apk add --no-cache \
     cpan install Modern::Perl YAML::Tiny CPU::Z80::Assembler
 
 WORKDIR /sdk
-COPY . /sdk
+# Keep z88dk and Python dependencies in a cacheable layer. Library sources and
+# other SDK files are copied only in the final stage, so editing them does not
+# reinstall the toolchain.
+COPY install.sh requirements.txt ./
 RUN ./install.sh
+
+FROM toolchain
+
+WORKDIR /sdk
+COPY . /sdk

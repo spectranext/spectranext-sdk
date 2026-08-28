@@ -2,6 +2,8 @@
 
 SDK for developing applications for the [Spectranext cartridge](https://spectranext.net) (and for original Spectranet).
 
+The prebuilt libraries in `clibs/` and their headers in `include/` are generated from `libraries/`. Run `make build-libraries` to regenerate them with the Alpine SDK image.
+
 ## Example Programs
 
 See example programs on [spectranext-examples](https://github.com/spectranext/spectranext-examples) repository.

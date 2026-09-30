@@ -23,6 +23,13 @@ typedef struct SPECTRANEXT_PACKED spectranext_xfs_read_request_s
     uint32_t maximum_data;
 } spectranext_xfs_read_request_t;
 
+typedef struct SPECTRANEXT_PACKED spectranext_wifi_scan_result_s
+{
+    char ssid[64];
+    uint8_t bssid[6];
+    int8_t rssi;
+} spectranext_wifi_scan_result_t;
+
 #undef SPECTRANEXT_PACKED
 
 enum spectranext_cmd_t
@@ -35,8 +42,16 @@ enum spectranext_cmd_t
     SPECTRANEXT_CMD_DNS_GETHOSTBYNAME = 5,
     SPECTRANEXT_CMD_ENGINECALL = 6,
     SPECTRANEXT_CMD_GET_MESSAGE = 7,
-    SPECTRANEXT_CMD_XFS_READ = 8
+    SPECTRANEXT_CMD_XFS_READ = 8,
+    CMD_SYS_SETTINGS_READ = 9,
+    CMD_SYS_SETTINGS_WRITE = 10,
+    CMD_SYS_DIAGNOSTICS = 11,
+    CMD_SYS_UPGRADE = 12
 };
+
+#define SPECTRANEXT_SETTINGS_SIZE 16u
+#define SPECTRANEXT_SETTINGS_DIVMMC_OFFSET 0u
+#define SPECTRANEXT_SAFETY_BOOTLOADER_VERSION 3u
 
 #define WIFI_CONTROLLER_STATUS_OFFLINE (0u)
 #define WIFI_CONTROLLER_STATUS_BUSY_UPDATING (1u)
@@ -60,6 +75,16 @@ enum spectranext_cmd_t
 
 #ifdef __SPECTRUM__
 extern int __LIB__ __FASTCALL__ spectranext_detect(void);
+/* Buffers must be outside page B (2000-2fff), including their full range.
+ * READ returns length 16; WRITE returns 0. Errors return negative settings
+ * error codes. No-page WRITE callers must page out from host RAM after return.
+ */
+extern int16_t __LIB__ spectranext_settings_read(uint8_t *payload, uint16_t capacity) __z88dk_callee;
+extern int16_t __LIB__ spectranext_settings_write(const uint8_t *payload, uint16_t length) __z88dk_callee;
+/* 10 bytes: bootloader u32 LE, active policy u8, lock reason u32 LE,
+ * bootloader safety support u8. */
+extern int16_t __LIB__ __FASTCALL__ spectranext_get_diagnostics(uint8_t *out);
+extern int16_t __LIB__ spectranext_upgrade(void) __z88dk_callee;
 
 /**
  * All functions below return **-1** on ROM/port failure (distinct from valid non‑negative results;
@@ -69,8 +94,9 @@ extern int __LIB__ __FASTCALL__ spectranext_detect(void);
  */
 extern int8_t __LIB__ spectranext_get_controller_status(int8_t *wifi_connection_out, uint32_t *ipv4_out) __z88dk_callee;
 extern int8_t __LIB__ spectranext_wifi_scan_access_points(void) __z88dk_callee;
-extern int8_t __LIB__ spectranext_wifi_get_access_point(uint8_t ap, char *result_name) __z88dk_callee;
-extern int8_t __LIB__ spectranext_wifi_connect_access_point(const char *ssid, const char *password) __z88dk_callee;
+extern int8_t __LIB__ spectranext_wifi_get_access_point(uint8_t ap, spectranext_wifi_scan_result_t *result) __z88dk_callee;
+extern int8_t __LIB__ spectranext_wifi_connect_access_point(const char *ssid, const char *password,
+    const uint8_t *bssid) __z88dk_callee;
 extern int8_t __LIB__ spectranext_wifi_disconnect(void) __z88dk_callee;
 extern int8_t __LIB__ spectranext_gethostbyname(const char *hostname, uint32_t *result_ipv4) __z88dk_callee;
 /**

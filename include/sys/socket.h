@@ -15,6 +15,18 @@
 #define SOCK_DGRAM	2
 #define SOCK_RAW	3
 
+/*
+ * Spectranext stream backends. These values are passed in socket()'s
+ * protocol argument and are valid only with AF_INET + SOCK_STREAM.
+ *
+ * A value of zero retains the historical plain TCP behaviour. These values
+ * deliberately use both bytes of socket()'s protocol argument, so direct
+ * legacy ROM callers which leave DE undefined remain on plain TCP.
+ */
+#define SPECTRANET_PROTO_TCP	0x0000
+#define SPECTRANET_PROTO_TLS	0xFFF0
+#define SPECTRANET_PROTO_SSH	0xFFF1
+
 /* Much of this should ultimately end up in sys/types.h */
 #define in_addr_t	unsigned long
 
@@ -75,4 +87,3 @@ extern int __LIB__ __CALLEE__	listen_callee(int sockfd, int backlog);
 #define ntohs(a)		(a)
 
 #endif
-

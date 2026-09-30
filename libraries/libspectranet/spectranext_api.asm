@@ -70,9 +70,10 @@ spectranext_wifi_scan_access_points_fail:
 	ld		l, 255		; -1
 	ret
 
-; int8_t spectranext_wifi_get_access_point(uint8_t ap, char *result_name); success: 0, error: -1.
-; sccz80: char pushed as word; top after ret = result_name, then ap word (C = index).
-; ROM: C = index, DE = result_name (ROM fills from device staging).
+; int8_t spectranext_wifi_get_access_point(uint8_t ap, spectranext_wifi_scan_result_t *result);
+; success: 0, error: -1. Result is SSID[64], BSSID[6], signed RSSI.
+; sccz80: char pushed as word; top after ret = result, then ap word (C = index).
+; ROM: C = index, DE = result (ROM fills from device staging).
 spectranext_wifi_get_access_point:
 	pop		hl
 	pop		de		; result_name (2nd param)
@@ -90,13 +91,16 @@ spectranext_wifi_get_access_point_fail:
 	ld		hl, -1
 	ret
 
-; int8_t spectranext_wifi_connect_access_point(const char* ssid, const char* password); success: 0, error: -1.
-; sccz80 LTR: top after ret = password, then ssid. ROM: HL = ssid, DE = password.
+; int8_t spectranext_wifi_connect_access_point(const char* ssid, const char* password,
+;     const uint8_t* bssid); success: 0, error: -1.
+; sccz80 LTR: top after ret = bssid, password, ssid.
+; ROM: HL = ssid, DE = password, BC = bssid (NULL means unavailable).
 spectranext_wifi_connect_access_point:
-	pop		bc
+	pop		af
+	pop		bc		; bssid (3rd param)
 	pop		de		; password (2nd param)
 	pop		hl		; ssid (1st param)
-	push	bc
+	push	af
 
 	push	ix
 	ld		a, CMD_WIFI_CONNECT
@@ -182,3 +186,55 @@ spectranext_xfs_read_fail:
 	ld	de, -1
 	ld		hl, -1
 	ret
+
+; Generic protected settings operations, source for both generated variants.
+PUBLIC spectranext_settings_read
+PUBLIC spectranext_settings_write
+PUBLIC spectranext_get_diagnostics
+PUBLIC spectranext_upgrade
+spectranext_settings_read:
+    pop de
+    pop bc
+    pop hl
+    push de
+    push ix
+    ld a, 9
+	IXCALL SPECTRANEXT
+    pop ix
+    jr c, settings_api_error
+    ld h, b
+    ld l, c
+    ret
+spectranext_settings_write:
+    pop de
+    pop bc
+    pop hl
+    push de
+    push ix
+    ld a, 10
+	IXCALL SPECTRANEXT
+    pop ix
+    jr c, settings_api_error
+    ld hl, 0
+    ret
+spectranext_get_diagnostics:
+    push ix
+    ld a, 11
+	IXCALL SPECTRANEXT
+    pop ix
+    jr c, settings_api_error
+    ld hl, 0
+    ret
+spectranext_upgrade:
+    push ix
+    ld a, 12
+	IXCALL SPECTRANEXT
+    pop ix
+    jr c, settings_api_error
+    ld hl, 0
+    ret
+settings_api_error:
+    neg
+    ld l, a
+    ld h, 255
+    ret

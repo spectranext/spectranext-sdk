@@ -9,3 +9,7 @@ cmake-build-debug
 build
 /vendor/
 dist
+*.o
+*_p.asm
+*_np.asm
+libraries/*/*.lib

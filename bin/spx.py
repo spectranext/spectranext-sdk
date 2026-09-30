@@ -1812,7 +1812,10 @@ def cmd_exec(args, show_progress: bool = True, verbose: bool = False) -> int:
 
 def main():
     parser = argparse.ArgumentParser(description='SPX - Spectranext tool')
-    parser.add_argument('--port', '-p', help='Serial port (e.g., /dev/ttyACM0) or TCP address (e.g., localhost:1337). Auto-detect USB first, then fall back to localhost:1337 if not specified.')
+    connection = parser.add_mutually_exclusive_group()
+    connection.add_argument('--port', '-p', help='Serial port (e.g., /dev/ttyACM0) or TCP address (e.g., localhost:1337). Auto-detect USB first, then fall back to localhost:1337 if not specified.')
+    connection.add_argument('--ip', metavar='HOST[:PORT]',
+                            help='Connect over Wi-Fi/TCP. Port 1337 is used when omitted.')
     parser.add_argument('--no-progress', action='store_true', help='Disable progress indicators')
     parser.add_argument('--verbose', '-v', action='store_true', help='Log all data sent and received')
     
@@ -1868,6 +1871,9 @@ def main():
                             help='Stream output continuously. If SECONDS is specified, follow for that many seconds then exit. If not specified, follow until Ctrl-C')
     
     args = parser.parse_args()
+
+    if args.ip:
+        args.port = args.ip if ':' in args.ip else f'{args.ip}:1337'
     
     if not args.command:
         parser.print_help()

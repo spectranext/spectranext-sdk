@@ -294,3 +294,14 @@ The SDK provides command-line tools for interacting with Spectranext:
 ### Spectranext filesystem tools
 
 You can read on xfs tools a little bit more here: https://docs.spectranext.net/development/syncing-with-computer
+
+SPX auto-detects USB by default. When the USB-C port is in host mode, connect through
+the Wi-Fi module instead (the debugger service uses TCP port 1337):
+
+```bash
+spx --ip 192.168.50.82 ls /
+spx --ip 192.168.50.82 exec "wifi status"
+```
+
+Use `--ip HOST:PORT` to override the port. The existing `--port` option still accepts
+both a serial-device path and an explicit `HOST:PORT` TCP endpoint.

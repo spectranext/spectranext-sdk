@@ -7,6 +7,7 @@
 #define SPECTRANEXT_STATUS_SUCCESS (0u)
 #define SPECTRANEXT_STATUS_ERROR (1u)
 #define SPECTRANEXT_XFS_READ_PATH_MAX (128u)
+#define SPECTRANEXT_VERSION_SIZE (32u)
 
 #if defined(__SPECTRUM__)
 #define SPECTRANEXT_PACKED
@@ -46,7 +47,8 @@ enum spectranext_cmd_t
     CMD_SYS_SETTINGS_READ = 9,
     CMD_SYS_SETTINGS_WRITE = 10,
     CMD_SYS_DIAGNOSTICS = 11,
-    CMD_SYS_UPGRADE = 12
+    CMD_SYS_UPGRADE = 12,
+    SPECTRANEXT_CMD_GET_VERSION = 15
 };
 
 #define SPECTRANEXT_SETTINGS_SIZE 16u
@@ -93,6 +95,8 @@ extern int16_t __LIB__ spectranext_upgrade(void) __z88dk_callee;
  * the others return **0**.
  */
 extern int8_t __LIB__ spectranext_get_controller_status(int8_t *wifi_connection_out, uint32_t *ipv4_out) __z88dk_callee;
+/* Writes a NUL-terminated build version to 32 bytes outside page B. */
+extern int8_t __LIB__ __FASTCALL__ spectranext_get_version(char *version_out);
 extern int8_t __LIB__ spectranext_wifi_scan_access_points(void) __z88dk_callee;
 extern int8_t __LIB__ spectranext_wifi_get_access_point(uint8_t ap, spectranext_wifi_scan_result_t *result) __z88dk_callee;
 extern int8_t __LIB__ spectranext_wifi_connect_access_point(const char *ssid, const char *password,

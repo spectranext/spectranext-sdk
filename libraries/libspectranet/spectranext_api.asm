@@ -12,8 +12,10 @@ CMD_DNS			    equ 5
 CMD_ENGINECALL		equ 6
 CMD_GET_MESSAGE		equ 7
 CMD_XFS_READ		equ 8
+CMD_GET_VERSION		equ 15
 
 PUBLIC spectranext_get_controller_status
+PUBLIC spectranext_get_version
 PUBLIC spectranext_wifi_scan_access_points
 PUBLIC spectranext_wifi_get_access_point
 PUBLIC spectranext_wifi_connect_access_point
@@ -24,6 +26,20 @@ PUBLIC spectranext_xfs_read
 
 se_fail:
 	pop		ix
+	ld		hl, -1
+	ret
+
+; int8_t spectranext_get_version(char *version_out) __FASTCALL__;
+; HL points to a writable 32-byte buffer outside page B.
+spectranext_get_version:
+	push	ix
+	ld		a, CMD_GET_VERSION
+	IXCALL	SPECTRANEXT
+	pop		ix
+	jr		c, spectranext_get_version_fail
+	ld		hl, 0
+	ret
+spectranext_get_version_fail:
 	ld		hl, -1
 	ret
 

@@ -13,3 +13,4 @@ dist
 *_p.asm
 *_np.asm
 libraries/*/*.lib
+__pycache__/

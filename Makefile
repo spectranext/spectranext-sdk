@@ -53,7 +53,7 @@ help:
 		'Variables:' \
 		'  IMAGE_ALPINE=spectranext/sdk-alpine IMAGE_UBUNTU=spectranext/sdk-ubuntu' \
 		'  TAG=latest PLATFORMS=linux/amd64,linux/arm64 BUILDX_BUILDER=spectranext-multiarch' \
-		'  SDK_VERSION=0.1.3 HOMEBREW_ARCH=arm64|x86_64 DIST_DIR=dist PYTHON=python3'
+		'  SDK_VERSION=$(SDK_VERSION) HOMEBREW_ARCH=arm64|x86_64 DIST_DIR=dist PYTHON=python3'
 
 homebrew-tarball:
 	rm -rf "$(DIST_DIR)/$(HOMEBREW_PACKAGE)"

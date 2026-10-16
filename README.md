@@ -305,3 +305,31 @@ spx --ip 192.168.50.82 exec "wifi status"
 
 Use `--ip HOST:PORT` to override the port. The existing `--port` option still accepts
 both a serial-device path and an explicit `HOST:PORT` TCP endpoint.
+
+## Pull request checks
+
+The **Build all examples** workflow tests every SDK pull request against all
+standalone programs in `spectranext/spectranext-examples`, including its
+submodules. Three independent checks build the candidate SDK through Homebrew,
+Docker Ubuntu and Docker Alpine. They use the PR's SDK sources and package, not
+the published SDK images. No publishing credentials are required.
+
+Each check keeps its logs, a JSON result list, TAPs and boot files as Actions
+artifacts. New top-level example projects are discovered automatically. See
+[.github/workflows/examples.yml](.github/workflows/examples.yml).
+
+To use the same build runner locally, source your SDK environment, install the
+examples repository's `requirements.txt` in an active Python environment, then:
+
+```sh
+python3 .github/scripts/build_examples.py --examples /path/to/spectranext-examples --output /tmp/example-builds
+```
+
+Use a fresh output directory for each run. This compiles all applications and
+generates their boot files; it does not upload or test device behavior.
+
+## Publishing SDK releases
+
+GitHub releases can build the Homebrew archive, update the Homebrew tap, and
+publish the Alpine/Ubuntu multi-platform Docker images automatically. See
+[RELEASING.md](RELEASING.md) for the three-job workflow, credentials and reruns.

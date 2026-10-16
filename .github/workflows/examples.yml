@@ -1,0 +1,128 @@
+name: Build all examples
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: examples-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  examples:
+    name: Examples (${{ matrix.variant }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: homebrew
+            runner: macos-15
+          - variant: ubuntu
+            runner: ubuntu-24.04
+          - variant: alpine
+            runner: ubuntu-24.04
+    steps:
+      - name: Check out candidate SDK
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: sdk
+          persist-credentials: false
+      - name: Check out all examples and their dependencies
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: spectranext/spectranext-examples
+          ref: master
+          submodules: recursive
+          path: examples
+          persist-credentials: false
+      - name: Record source revisions
+        run: |
+          git -C sdk rev-parse HEAD
+          git -C examples rev-parse HEAD
+          git -C examples submodule status --recursive
+      - name: Test CI helpers
+        run: python3 -m unittest discover -s sdk/.github/scripts/tests -v
+
+      # Use the PR archive with the tap's real installation recipe. The separate
+      # formula name avoids mistaking a released SDK for the candidate SDK.
+      - name: Install candidate Homebrew package
+        if: matrix.variant == 'homebrew'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          brew install cmake python@3.14
+          brew tap spectranext/homebrew-spectranext
+          make -C sdk homebrew-tarball SDK_VERSION=0.0.0 HOMEBREW_ARCH=arm64 PYTHON="$(brew --prefix python@3.14)/bin/python3.14"
+          tap_dir="$(brew --repository spectranext/homebrew-spectranext)"
+          python3 sdk/.github/scripts/homebrew_candidate.py \
+            --formula "$tap_dir/Formula/spectranext-sdk.rb" \
+            --archive sdk/dist/spectranext-sdk-0.0.0-macos-arm64.tar.gz \
+            --output "$tap_dir/Formula/spectranext-sdk-ci.rb"
+          if brew command trust >/dev/null 2>&1; then
+            brew trust --formula spectranext/spectranext/spectranext-sdk-ci
+          fi
+          brew install --skip-link --build-from-source spectranext/spectranext/spectranext-sdk-ci
+      - name: Build every example with Homebrew
+        if: matrix.variant == 'homebrew'
+        run: |
+          set -euo pipefail
+          "$(brew --prefix python@3.14)/bin/python3.14" -m venv "$RUNNER_TEMP/examples-python"
+          "$RUNNER_TEMP/examples-python/bin/pip" install -r examples/requirements.txt
+          source "$RUNNER_TEMP/examples-python/bin/activate"
+          source "$(brew --prefix spectranext-sdk-ci)/libexec/source.sh"
+          python3 sdk/.github/scripts/build_examples.py --examples examples --output results
+
+      - name: Set up Docker builder
+        if: matrix.variant != 'homebrew'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build candidate Docker SDK
+        if: matrix.variant != 'homebrew'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: sdk
+          file: sdk/Dockerfile.${{ matrix.variant }}
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: sdk-examples:${{ matrix.variant }}
+          cache-from: type=gha,scope=sdk-${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=sdk-${{ matrix.variant }}
+      - name: Build every example with Docker
+        if: matrix.variant != 'homebrew'
+        env:
+          SDK_VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          docker run --rm \
+            -v "$PWD/examples:/examples" \
+            -v "$PWD/sdk/.github/scripts:/checks:ro" \
+            -v "$PWD/results:/results" \
+            "sdk-examples:$SDK_VARIANT" bash -ec '
+              python3 -m venv /tmp/examples-python
+              /tmp/examples-python/bin/pip install -r /examples/requirements.txt
+              source /tmp/examples-python/bin/activate
+              source /sdk/source.sh
+              python3 /checks/build_examples.py --examples /examples --output /results
+            '
+
+      - name: Save example logs and build artifacts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: examples-${{ matrix.variant }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            results/*.log
+            results/results.json
+            results/**/*.tap
+            results/**/boot.zx

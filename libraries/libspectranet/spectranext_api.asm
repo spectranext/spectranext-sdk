@@ -13,9 +13,11 @@ CMD_ENGINECALL		equ 6
 CMD_GET_MESSAGE		equ 7
 CMD_XFS_READ		equ 8
 CMD_GET_VERSION		equ 15
+CMD_GET_STRING          equ 21
 
 PUBLIC spectranext_get_controller_status
 PUBLIC spectranext_get_version
+PUBLIC spectranext_get_string
 PUBLIC spectranext_wifi_scan_access_points
 PUBLIC spectranext_wifi_get_access_point
 PUBLIC spectranext_wifi_connect_access_point
@@ -42,6 +44,26 @@ spectranext_get_version:
 spectranext_get_version_fail:
 	ld		hl, -1
 	ret
+
+; int8_t spectranext_get_string(uint8_t string_id, char *out, uint8_t capacity);
+; sccz80 pushes byte arguments as words, left to right. ROM takes C=id,
+; B=capacity, HL=output; retain the caller's IX across the ROM gateway.
+spectranext_get_string:
+    pop hl
+    pop bc
+    ld b, c
+    pop de
+    ex (sp), hl
+    ld c, l
+    ex de, hl
+    push ix
+    ld a, CMD_GET_STRING
+	IXCALL	SPECTRANEXT
+    pop ix
+    ld hl, 0
+    ret nc
+    dec hl
+    ret
 
 ; int8_t spectranext_get_controller_status(int8_t *wifi_connection_out, uint32_t *ipv4_out);
 ; sccz80: args pushed LTR; top of stack after ret = right param (ipv4_out), then left (wifi_connection_out).

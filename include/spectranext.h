@@ -2,6 +2,8 @@
 #define _SPECTRANEXT_H_
 
 #include <stdint.h>
+#include "spectranext_strings.h"
+#include "match_layout.h"
 
 #define SPECTRANEXT_STATUS_IN_PROGRESS (0xFFu)
 #define SPECTRANEXT_STATUS_SUCCESS (0u)
@@ -97,6 +99,15 @@ extern int16_t __LIB__ spectranext_upgrade(void) __z88dk_callee;
 extern int8_t __LIB__ spectranext_get_controller_status(int8_t *wifi_connection_out, uint32_t *ipv4_out) __z88dk_callee;
 /* Writes a NUL-terminated build version to 32 bytes outside page B. */
 extern int8_t __LIB__ __FASTCALL__ spectranext_get_version(char *version_out);
+/** Read a string selected by SPECTRANEXT_STRING_*. capacity includes NUL (1..255).
+ * Return 0 on success, -1 if unavailable, unknown, zero capacity or too small.
+ * No truncation: failure writes an empty string when capacity is nonzero.
+ * The full caller-owned output buffer must be writable and outside page B
+ * (0x2000..0x2fff), and must not wrap the 16-bit address space.
+ * Local serial/name/version need no connection. Peer/initiator values require
+ * the sole established match. Names fall back to canonical serials.
+ */
+extern int8_t __LIB__ spectranext_get_string(uint8_t string_id, char *out, uint8_t capacity) __z88dk_callee;
 extern int8_t __LIB__ spectranext_wifi_scan_access_points(void) __z88dk_callee;
 extern int8_t __LIB__ spectranext_wifi_get_access_point(uint8_t ap, spectranext_wifi_scan_result_t *result) __z88dk_callee;
 extern int8_t __LIB__ spectranext_wifi_connect_access_point(const char *ssid, const char *password,

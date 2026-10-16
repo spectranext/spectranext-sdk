@@ -1,7 +1,7 @@
 IMAGE_ALPINE ?= spectranext/sdk-alpine
 IMAGE_UBUNTU ?= spectranext/sdk-ubuntu
 TAG ?= latest
-SDK_VERSION ?= 0.1.3
+SDK_VERSION ?= 0.1.4
 CONTEXT ?= .
 DOCKERFILE_ALPINE ?= Dockerfile.alpine
 DOCKERFILE_UBUNTU ?= Dockerfile.ubuntu
@@ -40,14 +40,14 @@ help:
 		'  build-all-arm64    Build alpine + ubuntu linux/arm64' \
 		'  build-all-multi    Build both images for amd64+arm64 (no push, no --load)' \
 		'  setup-buildx       Create/bootstrap buildx builder for multi-platform builds' \
-		'  push               Push multi-arch manifests for alpine + ubuntu' \
-		'  push-alpine        Push alpine multi-arch manifest' \
-		'  push-ubuntu        Push ubuntu multi-arch manifest' \
+		'  push               Push alpine + ubuntu multi-arch images as TAG and SDK_VERSION' \
+		'  push-alpine        Push alpine multi-arch image as TAG and SDK_VERSION' \
+		'  push-ubuntu        Push ubuntu multi-arch image as TAG and SDK_VERSION' \
 		'  push-all           Alias for push' \
-		'  push-alpine-amd64  Push alpine linux/amd64 only' \
-		'  push-alpine-arm64  Push alpine linux/arm64 only' \
-		'  push-ubuntu-amd64  Push ubuntu linux/amd64 only' \
-		'  push-ubuntu-arm64  Push ubuntu linux/arm64 only' \
+		'  push-alpine-amd64  Push alpine linux/amd64 as TAG-amd64 and SDK_VERSION-amd64' \
+		'  push-alpine-arm64  Push alpine linux/arm64 as TAG-arm64 and SDK_VERSION-arm64' \
+		'  push-ubuntu-amd64  Push ubuntu linux/amd64 as TAG-amd64 and SDK_VERSION-amd64' \
+		'  push-ubuntu-arm64  Push ubuntu linux/arm64 as TAG-arm64 and SDK_VERSION-arm64' \
 		'  homebrew-tarball   Build macOS Homebrew release tarball with vendored wheels' \
 		'' \
 		'Variables:' \
@@ -126,19 +126,19 @@ push: push-alpine push-ubuntu
 push-all: push
 
 push-alpine: setup-buildx
-	$(BUILDX) --platform $(PLATFORMS) -f $(DOCKERFILE_ALPINE) -t $(IMAGE_ALPINE):$(TAG) --push $(CONTEXT)
+	$(BUILDX) --platform $(PLATFORMS) -f $(DOCKERFILE_ALPINE) -t $(IMAGE_ALPINE):$(TAG) -t $(IMAGE_ALPINE):$(SDK_VERSION) --push $(CONTEXT)
 
 push-ubuntu: setup-buildx
-	$(BUILDX) --platform $(PLATFORMS) -f $(DOCKERFILE_UBUNTU) -t $(IMAGE_UBUNTU):$(TAG) --push $(CONTEXT)
+	$(BUILDX) --platform $(PLATFORMS) -f $(DOCKERFILE_UBUNTU) -t $(IMAGE_UBUNTU):$(TAG) -t $(IMAGE_UBUNTU):$(SDK_VERSION) --push $(CONTEXT)
 
 push-alpine-amd64:
-	docker buildx build --platform linux/amd64 -f $(DOCKERFILE_ALPINE) -t $(IMAGE_ALPINE):$(TAG)-amd64 --push $(CONTEXT)
+	docker buildx build --platform linux/amd64 -f $(DOCKERFILE_ALPINE) -t $(IMAGE_ALPINE):$(TAG)-amd64 -t $(IMAGE_ALPINE):$(SDK_VERSION)-amd64 --push $(CONTEXT)
 
 push-alpine-arm64:
-	docker buildx build --platform linux/arm64 -f $(DOCKERFILE_ALPINE) -t $(IMAGE_ALPINE):$(TAG)-arm64 --push $(CONTEXT)
+	docker buildx build --platform linux/arm64 -f $(DOCKERFILE_ALPINE) -t $(IMAGE_ALPINE):$(TAG)-arm64 -t $(IMAGE_ALPINE):$(SDK_VERSION)-arm64 --push $(CONTEXT)
 
 push-ubuntu-amd64:
-	docker buildx build --platform linux/amd64 -f $(DOCKERFILE_UBUNTU) -t $(IMAGE_UBUNTU):$(TAG)-amd64 --push $(CONTEXT)
+	docker buildx build --platform linux/amd64 -f $(DOCKERFILE_UBUNTU) -t $(IMAGE_UBUNTU):$(TAG)-amd64 -t $(IMAGE_UBUNTU):$(SDK_VERSION)-amd64 --push $(CONTEXT)
 
 push-ubuntu-arm64:
-	docker buildx build --platform linux/arm64 -f $(DOCKERFILE_UBUNTU) -t $(IMAGE_UBUNTU):$(TAG)-arm64 --push $(CONTEXT)
+	docker buildx build --platform linux/arm64 -f $(DOCKERFILE_UBUNTU) -t $(IMAGE_UBUNTU):$(TAG)-arm64 -t $(IMAGE_UBUNTU):$(SDK_VERSION)-arm64 --push $(CONTEXT)
